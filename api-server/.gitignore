@@ -1,0 +1,7 @@
+# ⚠️ 敏感文件 - 绝对不提交到版本控制
+.env
+*.secret
+ADMIN_INITIAL_PASSWORD.txt
+config.json
+uploads/
+node_modules/

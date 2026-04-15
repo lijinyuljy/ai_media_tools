@@ -1,0 +1,684 @@
+import { useState, useEffect } from 'react';
+import AdminLogin from './AdminLogin';
+
+// 定义模型供应商类型
+interface ModelProvider {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  modelName: string;
+  type: 'vlm' | 'inpaint' | 'video' | 'general';
+}
+
+const AdminDashboard = () => {
+  const [gpuNodes, setGpuNodes] = useState(2);
+  const [isScaling, setIsScaling] = useState(false);
+
+  const [revenue, setRevenue] = useState(0);
+  const [apiCost, setApiCost] = useState(4236.20);
+  const [adRevenue, setAdRevenue] = useState(0);
+
+  // System Prompt 编辑器
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [promptSaveStatus, setPromptSaveStatus] = useState('');
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
+
+  // 1. 模型库状态 (区分系统内置和外部扩展)
+  const [modelLibrary, setModelLibrary] = useState<ModelProvider[]>([
+    { id: 'sys-vsr', name: 'Video-subtitle-remover (VSR)', baseUrl: 'Internal GPU Cluster', apiKey: 'system-auth', modelName: 'vsr-static-v1', type: 'inpaint' },
+    { id: 'sys-propainter', name: 'ProPainter (双流动态消除)', baseUrl: 'Internal GPU Cluster', apiKey: 'system-auth', modelName: 'propainter-v2', type: 'video' },
+    { id: 'ext-1', name: 'OpenAI 官方', baseUrl: 'https://api.openai.com/v1', apiKey: '', modelName: 'gpt-4o', type: 'vlm' },
+  ]);
+
+  // 映射关系
+  const [featureMappings, setFeatureMappings] = useState({
+    vlm: 'ext-1',
+    inpaint: 'sys-vsr',
+    video: 'sys-propainter'
+  });
+
+  // 1.2 弹窗相关状态
+  const [modalMode, setModalMode] = useState<'add' | 'edit' | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [tempModel, setTempModel] = useState<Partial<ModelProvider>>({ type: 'vlm' });
+
+  // 2. 侧边栏导航状态
+  const [activeMenu, setActiveMenu] = useState<'overview' | 'orders' | 'invoices' | 'tickets'>('overview');
+
+  // 3. 业务数据状态
+  const [orders, setOrders] = useState<any[]>([]);
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [tickets, setTickets] = useState<any[]>([]);
+  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
+  const selectedTicket = tickets.find(t => t.id === selectedTicketId);
+  const [replyText, setReplyText] = useState('');
+
+  const fetchBusinessData = async () => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return;
+    const headers = { 'Authorization': `Bearer ${token}` };
+    try {
+      const [ordRes, invRes, tikRes] = await Promise.all([
+        fetch('http://localhost:3000/api/admin/orders', { headers }),
+        fetch('http://localhost:3000/api/admin/invoices', { headers }),
+        fetch('http://localhost:3000/api/admin/tickets', { headers })
+      ]);
+      const [ordData, invData, tikData] = await Promise.all([ordRes.json(), invRes.json(), tikRes.json()]);
+      const currentOrders = ordData.orders || [];
+      setOrders(currentOrders);
+      setInvoices(invData.invoices || []);
+      setTickets(tikData.tickets || []);
+
+      // 计算真实营收 (实收 + 预估广告收益)
+      const totalPaid = currentOrders.filter((o:any) => o.paymentMethod !== 'AdReward').reduce((acc:number, o:any) => acc + (o.amount || 0), 0);
+      const totalAd = currentOrders.filter((o:any) => o.paymentMethod === 'AdReward').reduce((acc:number, o:any) => acc + (o.estimatedRevenue || 0), 0);
+      setRevenue(totalPaid + totalAd);
+      setAdRevenue(totalAd);
+    } catch { /* fail silent */ }
+  };
+
+  useEffect(() => {
+    const tick = setInterval(() => {
+      setRevenue(prev => prev + (Math.random() * 0.5));
+      setApiCost(prev => prev + (Math.random() * 0.2));
+    }, 3000);
+
+    // 从后端同步持久化配置
+    fetch('http://localhost:3000/api/admin/vlm-prompt').then(r => r.json()).then(d => setSystemPrompt(d.prompt || '')).catch(() => { });
+    fetch('http://localhost:3000/api/admin/model-library').then(r => r.json()).then(d => { if (d.modelLibrary) setModelLibrary(d.modelLibrary); }).catch(() => { });
+    fetch('http://localhost:3000/api/admin/feature-routing').then(r => r.json()).then(d => { if (d.featureRouting) setFeatureMappings(d.featureRouting); }).catch(() => { });
+
+    fetchBusinessData();
+    const busInterval = setInterval(fetchBusinessData, 5000);
+
+    return () => { clearInterval(tick); clearInterval(busInterval); };
+  }, []);
+
+  const saveModelLibraryToBackend = async (newLib: ModelProvider[]) => {
+    try {
+      await fetch('http://localhost:3000/api/admin/model-library', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelLibrary: newLib })
+      });
+    } catch { /* silent */ }
+  };
+
+  const openEdit = (m: ModelProvider) => {
+    setTempModel(m);
+    setEditingId(m.id);
+    setModalMode('edit');
+  };
+
+  const handleSave = () => {
+    let newLib: ModelProvider[];
+    if (modalMode === 'add') {
+      const id = 'ext-' + Date.now();
+      newLib = [...modelLibrary, { ...tempModel, id } as ModelProvider];
+    } else {
+      newLib = modelLibrary.map(m => m.id === editingId ? { ...m, ...tempModel } as ModelProvider : m);
+    }
+    setModelLibrary(newLib);
+    saveModelLibraryToBackend(newLib);
+    setModalMode(null);
+    setTempModel({ type: 'vlm' });
+  };
+
+  const deleteModel = (id: string) => {
+    if (id.startsWith('sys-')) return;
+    const newLib = modelLibrary.filter(m => m.id !== id);
+    setModelLibrary(newLib);
+    saveModelLibraryToBackend(newLib);
+  };
+
+  const getStatus = (m: ModelProvider) => {
+    if (m.id.startsWith('sys-')) return { label: '内核就绪', color: '#10b981' };
+    return m.apiKey && m.apiKey.length > 5 ? { label: '已配置', color: '#10b981' } : { label: '待配置', color: '#64748b' };
+  };
+
+  return (
+    <div className="animate-fade-in" style={{ padding: '2rem', color: '#fff', maxWidth: '1400px', margin: '0 auto' }}>
+
+      {/* 头部控制栏 (WINSPACETIME / 后管调度中心) */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1.2rem' }}>
+        <h2 style={{ margin: 0, fontSize: '1.8rem', fontWeight: 800, letterSpacing: '-0.02em', background: 'linear-gradient(90deg, #f472b6, #a78bfa)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+          WINSPACETIME <span style={{ fontWeight: 300, fontSize: '1.2rem', color: '#64748b', WebkitTextFillColor: '#64748b' }}>/ 后管调度中心</span>
+        </h2>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          <div style={{ background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', padding: '0.4rem 1rem', borderRadius: '99px', fontSize: '0.85rem', border: '1px solid rgba(16,185,129,0.3)', fontWeight: 600 }}>
+            ● 算力集群在线
+          </div>
+        </div>
+      </div>
+
+      {/* 核心功能区 (侧边栏 + 主内容) */}
+      <div style={{ display: 'flex', gap: '2.5rem', alignItems: 'flex-start' }}>
+
+        {/* Sidebar Navigation */}
+        <div style={{ width: '240px', flexShrink: 0 }}>
+          <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.6rem', position: 'sticky', top: '2rem' }}>
+            {[
+              { id: 'overview', label: '系统监控', icon: '📊' },
+              { id: 'orders', label: '订单管理', icon: '💰' },
+              { id: 'invoices', label: '开票中心', icon: '📑' },
+              { id: 'tickets', label: '工单工作台', icon: '🎧' }
+            ].map(item => (
+              <button
+                key={item.id}
+                onClick={() => setActiveMenu(item.id as any)}
+                style={{
+                  textAlign: 'left', padding: '1.2rem', borderRadius: '10px', border: 'none', cursor: 'pointer',
+                  background: activeMenu === item.id ? 'var(--accent-primary)' : 'rgba(255,255,255,0.02)',
+                  color: activeMenu === item.id ? '#fff' : '#94a3b8', fontWeight: 600, transition: '0.3s cubic-bezier(0.16, 1, 0.3, 1)', display: 'flex', gap: '1rem'
+                }}
+              >
+                <span style={{ fontSize: '1.2rem' }}>{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Content Area */}
+        <div style={{ flex: 1, minHeight: '80vh' }}>
+
+          {activeMenu === 'overview' && (
+            <div className="animate-slide-up">
+              {/* KPI 看板 */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.5rem', marginBottom: '2rem' }}>
+                {[
+                  { label: '预估总营收', val: `¥${revenue.toFixed(2)}`, sub: '↑ 实收 + 广告预估', color: '#10b981' },
+                  { label: '算力总耗费', val: `¥${apiCost.toFixed(2)}`, sub: '↓ 命中缓存', color: '#f43f5e' },
+                  { label: '广告激励收益', val: `¥${adRevenue.toFixed(2)}`, sub: 'eCPM 预估产出', color: '#fbbf24' },
+                  { label: '解析文件总数', val: '14,208', sub: '实时处理中', color: '#fff' }
+                ].map((kpi, i) => (
+                  <div key={i} className="glass-panel" style={{ padding: '1.5rem', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '0.5rem' }}>{kpi.label}</div>
+                    <div style={{ fontSize: '1.8rem', fontWeight: 700, color: kpi.color }}>{kpi.val}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '2rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+
+                  {/* 系统配置内容 */}
+                  <div className="glass-panel" style={{ padding: '1.8rem', background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(0,0,0,0.3) 100%)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem' }}>
+                      <h3 style={{ margin: 0 }}>🛡️ 核心算力集群状态</h3>
+                      <div style={{ fontSize: '0.8rem', color: '#10b981' }}>{gpuNodes} Nodes Online</div>
+                    </div>
+
+                    {/* 节点微观监控卡片 */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+                      {modelLibrary.filter(m => m.id.startsWith('sys-')).map(sys => (
+                        <div key={sys.id} style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <div style={{ fontWeight: 600 }}>{sys.name}</div>
+                            <span style={{ fontSize: '0.7rem', color: '#10b981' }}>Active</span>
+                          </div>
+                          <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.4rem' }}>协议: {sys.modelName}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* 详细节点列表 (恢复并增强内容) */}
+                    <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '1rem', border: '1px solid rgba(255,255,255,0.05)' }}>
+                      <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '1rem', fontWeight: 600 }}>实时节点清单 (Node Fleet)</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
+                        {[
+                          { id: 'WS-NODE-01', gpu: 'A100 x 8', load: '72%', temp: '64°C', status: 'Healthy' },
+                          { id: 'WS-NODE-02', gpu: 'H100 x 4', load: '45%', temp: '58°C', status: 'Healthy' },
+                          { id: 'WS-NODE-03', gpu: 'RTX 4090 x 16', load: '89%', temp: '72°C', status: 'Healthy', bottleneck: true }
+                        ].slice(0, gpuNodes).map(node => (
+                          <div key={node.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '0.8rem 1rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.03)' }}>
+                            <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                              <div style={{ width: '8px', height: '8px', background: node.bottleneck ? '#fbbf24' : '#10b981', borderRadius: '50%', boxShadow: `0 0 10px ${node.bottleneck ? '#fbbf24' : '#10b981'}` }}></div>
+                              <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{node.id}</div>
+                              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{node.gpu}</div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '1.5rem', fontSize: '0.75rem' }}>
+                              <span style={{ color: '#94a3b8' }}>负载: <b style={{ color: '#fff' }}>{node.load}</b></span>
+                              <span style={{ color: '#94a3b8' }}>温度: <b style={{ color: '#fff' }}>{node.temp}</b></span>
+                              <span style={{ color: node.bottleneck ? '#fbbf24' : '#10b981' }}>{node.status}</span>
+                            </div>
+                          </div>
+                        ))}
+                        {gpuNodes < 3 && (
+                          <div style={{ textAlign: 'center', padding: '1rem', color: '#475569', fontSize: '0.75rem', border: '1px dashed rgba(255,255,255,0.1)', borderRadius: '8px' }}>
+                            等待节点扩容入库...
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* VLM System Prompt 编辑区 (恢复内容) */}
+                  <div className="glass-panel" style={{ padding: '1.8rem', border: '1px solid rgba(167, 139, 250, 0.2)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem' }}>
+                      <h3 style={{ margin: 0 }}>✨ VLM 系统提示词 (反推指令控制)</h3>
+                      <button
+                        onClick={async () => {
+                          setPromptSaveStatus('Saving...');
+                          try {
+                            await fetch('http://localhost:3000/api/admin/vlm-prompt', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ prompt: systemPrompt })
+                            });
+                            setPromptSaveStatus('✅ 已成功落盘持久化');
+                            setTimeout(() => setPromptSaveStatus(''), 3000);
+                          } catch { setPromptSaveStatus('❌ 保存失败'); }
+                        }}
+                        className="btn-primary"
+                        style={{ padding: '0.5rem 1.2rem', fontSize: '0.85rem' }}
+                      >
+                        保存配置
+                      </button>
+                    </div>
+                    <textarea
+                      value={systemPrompt}
+                      onChange={e => setSystemPrompt(e.target.value)}
+                      placeholder="在这里定义视觉模型（VLM）提取视频描述时的系统指令..."
+                      style={{
+                        width: '100%', height: '120px', background: 'rgba(0,0,0,0.3)', border: '1px solid #334155',
+                        borderRadius: '10px', color: '#e2e8f0', padding: '1rem', fontSize: '0.9rem', lineHeight: '1.6',
+                        fontFamily: 'monospace', outline: 'none'
+                      }}
+                    />
+                    {promptSaveStatus && <div style={{ fontSize: '0.8rem', marginTop: '0.5rem', color: promptSaveStatus.includes('✅') ? '#10b981' : '#f43f5e' }}>{promptSaveStatus}</div>}
+                    <div style={{ marginTop: '0.8rem', color: '#64748b', fontSize: '0.75rem' }}>
+                      提示：系统描述将作为 System Message 发送给供应商模型，直接影响一键反推的效果。
+                    </div>
+                  </div>
+
+                  {/* 外部 API 管理 */}
+                  <div className="glass-panel" style={{ padding: '1.8rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                      <h3 style={{ margin: 0 }}>🔌 外部 API 提供商</h3>
+                      <button onClick={() => { setTempModel({ type: 'vlm' }); setModalMode('add'); }} className="btn-primary" style={{ padding: '0.5rem 1rem' }}>+ 扩库</button>
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                      <thead><tr style={{ textAlign: 'left', borderBottom: '1px solid #334155', color: '#94a3b8' }}><th>名称</th><th>模型</th><th>状态</th><th>操作</th></tr></thead>
+                      <tbody>
+                        {modelLibrary.filter(m => !m.id.startsWith('sys-')).map(m => (
+                          <tr key={m.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                            <td style={{ padding: '1rem 0' }}>{m.name}</td>
+                            <td><code>{m.modelName}</code></td>
+                            <td><span style={{ color: getStatus(m).color }}>{getStatus(m).label}</span></td>
+                            <td>
+                              <button onClick={() => openEdit(m)} style={{ color: 'var(--accent-primary)', background: 'transparent', border: 'none', cursor: 'pointer', marginRight: '1rem' }}>编辑</button>
+                              <button onClick={() => deleteModel(m.id)} style={{ color: '#f43f5e', background: 'transparent', border: 'none', cursor: 'pointer' }}>下线</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* 引擎绑定 */}
+                  <div className="glass-panel" style={{ padding: '1.8rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                      <h3 style={{ margin: 0 }}>🎯 功能引擎调度中心</h3>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await fetch('http://localhost:3000/api/admin/feature-routing', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ featureRouting: featureMappings })
+                            });
+                            alert('✅ 引擎路由映射已保存并全网同步');
+                          } catch { alert('❌ 保存失败'); }
+                        }}
+                        className="btn-primary"
+                        style={{ padding: '0.5rem 1.2rem', fontSize: '0.85rem' }}
+                      >
+                        保存引擎映射规则
+                      </button>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.2rem' }}>
+                      {[
+                        { key: 'vlm', label: '视觉理解 (VLM)' },
+                        { key: 'inpaint', label: '静态擦除 (VSR)' },
+                        { key: 'video', label: '动态补全 (Propainter)' }
+                      ].map(f => (
+                        <div key={f.key}>
+                          <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>{f.label}</div>
+                          <select
+                            value={featureMappings[f.key as keyof typeof featureMappings]}
+                            onChange={(e) => {
+                              const next = { ...featureMappings, [f.key]: e.target.value };
+                              setFeatureMappings(next);
+                            }}
+                            style={{ width: '100%', background: '#1e293b', color: '#fff', border: '1px solid #334155', padding: '0.6rem', borderRadius: '6px' }}
+                          >
+                            {modelLibrary.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* 右侧集群监控 */}
+                <div style={{ position: 'sticky', top: '2rem' }}>
+                  <div className="glass-panel" style={{ padding: '1.8rem' }}>
+                    <h3 style={{ margin: 0 }}>⚡ 算力集群监控</h3>
+                    <div style={{ position: 'relative', width: '160px', height: '160px', margin: '2rem auto', borderRadius: '50%', background: 'conic-gradient(var(--accent-primary) 0% 87%, rgba(255,255,255,0.05) 87% 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ width: '130px', height: '130px', background: '#0f172a', borderRadius: '50%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                        <span style={{ fontSize: '2.2rem', fontWeight: 800 }}>87%</span>
+                        <span style={{ color: '#64748b', fontSize: '0.75rem' }}>资源水位</span>
+                      </div>
+                    </div>
+                    <button onClick={() => { setIsScaling(true); setTimeout(() => { setIsScaling(false); setGpuNodes(n => n + 1); }, 1500); }} style={{ width: '100%', padding: '0.8rem', background: 'var(--btn-gradient)', border: 'none', borderRadius: '8px', color: '#fff', fontWeight: 800, cursor: 'pointer' }}>
+                      {isScaling ? '扩容中...' : '+ 紧急增加 GPU 节点'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeMenu === 'orders' && (
+            <div className="glass-panel animate-slide-up" style={{ padding: '2rem' }}>
+              <div style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem', marginBottom: '1.5rem' }}>
+                <h2 style={{ margin: 0 }}>💰 订单流水中心</h2>
+                <p style={{ margin: '0.5rem 0 0', color: '#64748b', fontSize: '0.9rem' }}>管理全站支付记录及算力发放状态</p>
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead style={{ color: '#94a3b8', borderBottom: '1px solid #334155', textAlign: 'left' }}>
+                  <tr>
+                    <th style={{ padding: '1rem' }}>用户标识</th>
+                    <th>充值金额</th>
+                    <th>变动点数</th>
+                    <th>支付渠道</th>
+                    <th>状态</th>
+                    <th>时间</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orders.map(o => (
+                    <tr key={o.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '1.2rem 1rem' }}><code style={{ color: '#a78bfa' }}>{o.userId}</code></td>
+                      <td style={{ fontWeight: 700 }}>{o.paymentMethod === 'AdReward' ? <span style={{ color: '#64748b' }}>¥0.00</span> : `¥${o.amount}`}</td>
+                      <td style={{ color: '#10b981' }}>+ {o.credits} C</td>
+                      <td>{o.paymentMethod === 'AdReward' ? <span style={{ color: '#fbbf24', fontSize: '0.8rem' }}>广告激励 (预计 ¥{o.estimatedRevenue})</span> : o.paymentMethod}</td>
+                      <td><span style={{ padding: '0.2rem 0.6rem', borderRadius: '4px', fontSize: '0.8rem', background: 'rgba(16,185,129,0.1)', color: '#10b981' }}>已支付</span></td>
+                      <td style={{ color: '#64748b' }}>{new Date(o.createdAt).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                  {orders.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', padding: '4rem', color: '#334155' }}>暂无流水记录</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {activeMenu === 'invoices' && (
+            <div className="glass-panel animate-slide-up" style={{ padding: '2rem' }}>
+              <div style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem', marginBottom: '1.5rem' }}>
+                <h2 style={{ margin: 0 }}>📑 发票代开柜台</h2>
+                <p style={{ margin: '0.5rem 0 0', color: '#64748b', fontSize: '0.9rem' }}>处理用户提起的高级增值税电子发票申请</p>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}>
+                {invoices.map(i => (
+                  <div key={i.id} style={{ background: 'rgba(255,255,255,0.03)', padding: '1.5rem', borderRadius: '15px', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.2rem' }}>
+                      <span style={{ fontSize: '1.2rem', fontWeight: 800, color: '#fff' }}>¥{i.amount}</span>
+                      <span style={{ padding: '0.2rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem', background: i.status === 'sent' ? 'rgba(100,116,139,0.1)' : 'rgba(251,191,36,0.1)', color: i.status === 'sent' ? '#64748b' : '#fbbf24' }}>
+                        {i.status === 'sent' ? '已开具' : '待处理'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '1rem', fontWeight: 600, color: '#e2e8f0' }}>{i.companyName}</div>
+                    <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.5rem' }}>统一社会信用代码: {i.taxId}</div>
+                    <div style={{ fontSize: '0.8rem', color: '#64748b' }}>接收人邮箱: {i.email}</div>
+                    
+                    {i.fileUrl ? (
+                      <div style={{ marginTop: '1.2rem', padding: '0.7rem', background: 'rgba(16,185,129,0.1)', color: '#10b981', borderRadius: '8px', textAlign: 'center', fontSize: '0.85rem' }}>
+                        ✅ 已上传: <a href={`http://localhost:3000${i.fileUrl}`} target="_blank" rel="noreferrer" style={{ color: '#10b981', textDecoration: 'underline' }}>查看文件</a>
+                      </div>
+                    ) : (
+                      <div style={{ marginTop: '1.2rem' }}>
+                         <label className="btn-primary" style={{ display: 'block', textAlign: 'center', cursor: 'pointer', padding: '0.7rem' }}>
+                            上传发票并同步
+                            <input 
+                               type="file" 
+                               style={{ display: 'none' }} 
+                               onChange={async (e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  const formData = new FormData();
+                                  formData.append('invoice', file);
+                                  const token = localStorage.getItem('admin_token');
+                                  await fetch(`http://localhost:3000/api/admin/invoices/${i.id}/upload?type=invoices`, {
+                                     method: 'POST',
+                                     headers: { 'Authorization': `Bearer ${token}` },
+                                     body: formData
+                                  });
+                                  fetchBusinessData();
+                               }} 
+                            />
+                         </label>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {invoices.length === 0 && <div style={{ textAlign: 'center', gridColumn: '1/-1', padding: '5rem', color: '#334155' }}>当前无待开票申请</div>}
+              </div>
+            </div>
+          )}
+
+          {activeMenu === 'tickets' && (
+            <div className="glass-panel animate-slide-up" style={{ padding: '2rem', minHeight: '600px', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem', marginBottom: '1.5rem' }}>
+                <h2 style={{ margin: 0 }}>🎧 客服工单中台</h2>
+                <p style={{ margin: '0.5rem 0 0', color: '#64748b', fontSize: '0.9rem' }}>响应用户反馈，维护社区服务品质</p>
+              </div>
+              <div style={{ display: 'flex', gap: '2rem', flex: 1 }}>
+                {/* Tickets List */}
+                <div style={{ width: '320px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  {tickets.map(t => (
+                    <div 
+                      key={t.id} 
+                      onClick={() => setSelectedTicketId(t.id)}
+                      style={{ 
+                        padding: '1.2rem', borderRadius: '12px', background: selectedTicket?.id === t.id ? 'rgba(167,139,250,0.1)' : 'rgba(255,255,255,0.02)', 
+                        border: selectedTicket?.id === t.id ? '1px solid var(--accent-primary)' : '1px solid rgba(255,255,255,0.05)', 
+                        cursor: 'pointer', transition: '0.2s' 
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{t.subject}</div>
+                        <span style={{ 
+                          fontSize: '0.7rem', padding: '0.1rem 0.4rem', borderRadius: '4px', 
+                          background: t.status === 'closed' ? 'rgba(100,116,139,0.1)' : (t.status === 'replied' ? 'rgba(16,185,129,0.1)' : 'rgba(244,63,94,0.1)'), 
+                          color: t.status === 'closed' ? '#64748b' : (t.status === 'replied' ? '#10b981' : '#f43f5e') 
+                        }}>
+                          {t.status === 'closed' ? '已办结' : (t.status === 'replied' ? '已回复' : '待处理')}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.6rem' }}>来自: {t.userId.slice(-6)} · {new Date(t.createdAt).toLocaleDateString()}</div>
+                    </div>
+                  ))}
+                  {tickets.length === 0 && <div style={{ textAlign: 'center', py: '3rem', color: '#334155' }}>无活动工单</div>}
+                </div>
+                {/* Forum Thread Interface */}
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'rgba(0,0,0,0.2)', borderRadius: '15px', border: '1px solid rgba(255,255,255,0.05)', padding: '1.5rem', maxHeight: '700px', overflow: 'hidden' }}>
+                  {selectedTicket ? (
+                    <>
+                      {/* Reply Form at the TOP - only if NOT closed */}
+                      {selectedTicket.status !== 'closed' ? (
+                        <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'flex-end', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '1.2rem', marginBottom: '1.2rem' }}>
+                          <div style={{ flex: 1 }}>
+                            <textarea 
+                               value={replyText} onChange={e => setReplyText(e.target.value)}
+                               placeholder="输入回复内容..." 
+                               style={{ width: '100%', background: 'rgba(255,255,255,0.01)', border: '1px solid #334155', borderRadius: '10px', color: '#fff', padding: '1rem', height: '60px', outline: 'none' }}
+                            />
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                             <label className="btn-primary" style={{ padding: '0.3rem 0.8rem', fontSize: '0.75rem', cursor: 'pointer', textAlign: 'center' }}>
+                                <span id="admin-upload-label">📎 附件</span>
+                                <input 
+                                  type="file" 
+                                  style={{ display: 'none' }} 
+                                  id="admin-ticket-upload"
+                                  onChange={(e) => {
+                                     if (e.target.files?.[0]) {
+                                        const labelText = document.getElementById('admin-upload-label');
+                                        if (labelText) labelText.textContent = '✅ ' + e.target.files[0].name.slice(0, 10) + '...';
+                                     }
+                                  }}
+                                />
+                             </label>
+                             <button 
+                               onClick={async () => {
+                                  const fileInput = document.getElementById('admin-ticket-upload') as HTMLInputElement;
+                                  const formData = new FormData();
+                                  formData.append('content', replyText);
+                                  if (fileInput?.files?.[0]) formData.append('attachment', fileInput.files[0]);
+                                  
+                                  const token = localStorage.getItem('admin_token');
+                                  await fetch(`http://localhost:3000/api/admin/tickets/${selectedTicket.id}/reply?type=tickets`, {
+                                     method: 'POST',
+                                     headers: { 'Authorization': `Bearer ${token}` },
+                                     body: formData
+                                  });
+                                  setReplyText('');
+                                  if (fileInput) {
+                                    fileInput.value = '';
+                                    const labelText = document.getElementById('admin-upload-label');
+                                    if (labelText) labelText.textContent = '📎 附件';
+                                  }
+                                  fetchBusinessData();
+                               }}
+                               className="btn-primary" 
+                               style={{ padding: '0.5rem 1.2rem', fontSize: '0.9rem' }}
+                             >
+                               发送并回复
+                             </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ padding: '1rem', background: 'rgba(100,116,139,0.05)', borderRadius: '10px', color: '#94a3b8', fontSize: '0.85rem', textAlign: 'center', marginBottom: '1.2rem', border: '1px solid rgba(255,255,255,0.05)' }}>
+                           🔒 该工单已办结，不再支持回复。
+                        </div>
+                      )}
+
+                      {/* Scrollable Thread Content */}
+                      <div style={{ flex: 1, overflowY: 'auto', paddingRight: '0.5rem' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+                          {/* Replies in REVERSE order */}
+                          {[...selectedTicket.replies].reverse().map((r: any, idx: number) => (
+                            <div key={idx} style={{ background: r.role === 'admin' ? 'rgba(167,139,250,0.03)' : 'rgba(255,255,255,0.01)', padding: '1.2rem', borderRadius: '10px', borderLeft: `4px solid ${r.role === 'admin' ? 'var(--accent-primary)' : '#475569'}` }}>
+                               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: r.role === 'admin' ? 'var(--accent-primary)' : '#94a3b8' }}>
+                                     {r.role === 'admin' ? '管理员回复' : '用户追问'}
+                                  </span>
+                                  <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{new Date(r.createdAt).toLocaleString()}</span>
+                               </div>
+                               <div style={{ fontSize: '0.95rem', lineHeight: 1.6, color: '#e2e8f0' }}>{r.content}</div>
+                               {r.attachment && (
+                                  <div style={{ marginTop: '0.8rem', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.5rem' }}>
+                                     <img src={`http://localhost:3000${r.attachment}`} alt="attachment" style={{ maxWidth: '100%', borderRadius: '4px', cursor: 'pointer', border: '1px solid rgba(255,255,255,0.1)' }} onClick={() => window.open(`http://localhost:3000${r.attachment}`)} />
+                                  </div>
+                               )}
+                            </div>
+                          ))}
+
+                          {/* Original Question at the bottom of the list (since it's reversed) */}
+                          <div style={{ background: 'rgba(255,255,255,0.03)', padding: '1.2rem', borderRadius: '10px', borderLeft: '4px solid #475569' }}>
+                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#94a3b8' }}>用户原始描述</span>
+                                <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{new Date(selectedTicket.createdAt).toLocaleString()}</span>
+                             </div>
+                             <div style={{ fontSize: '0.95rem', lineHeight: 1.6, color: '#e2e8f0' }}>{selectedTicket.content}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>请选择一个工单进行处理</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      </div>
+
+      {/* 模型编辑/添加弹窗 */}
+      {modalMode && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, backdropFilter: 'blur(10px)' }}>
+          <div className="glass-panel" style={{ padding: '2.5rem', width: '480px', border: '1px solid var(--accent-primary)' }}>
+            <h3 style={{ marginTop: 0, marginBottom: '2rem' }}>{modalMode === 'edit' ? '🛠️ 调整供应商配置' : '🚀 录入新算力供应商'}</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+              <input value={tempModel.name || ''} placeholder="服务商名称" onChange={e => setTempModel({ ...tempModel, name: e.target.value })} style={{ background: '#1e293b', border: '1px solid #334155', color: '#fff', padding: '0.8rem', borderRadius: '8px' }} />
+              <input value={tempModel.baseUrl || ''} placeholder="API Endpoint" onChange={e => setTempModel({ ...tempModel, baseUrl: e.target.value })} style={{ background: '#1e293b', border: '1px solid #334155', color: '#fff', padding: '0.8rem', borderRadius: '8px' }} />
+              <input value={tempModel.modelName || ''} placeholder="模型标识 (Model ID)" onChange={e => setTempModel({ ...tempModel, modelName: e.target.value })} style={{ background: '#1e293b', border: '1px solid #334155', color: '#fff', padding: '0.8rem', borderRadius: '8px' }} />
+              <input value={tempModel.apiKey || ''} type="password" placeholder="授权 Token" onChange={e => setTempModel({ ...tempModel, apiKey: e.target.value })} style={{ background: '#1e293b', border: '1px solid #334155', color: '#fff', padding: '0.8rem', borderRadius: '8px' }} />
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                <button onClick={() => setModalMode(null)} style={{ flex: 1, padding: '0.8rem', background: '#334155', border: 'none', color: '#fff', borderRadius: '8px', cursor: 'pointer' }}>放弃</button>
+                <button onClick={handleSave} style={{ flex: 1, padding: '0.8rem', background: 'var(--accent-primary)', border: 'none', color: '#fff', borderRadius: '8px', cursor: 'pointer', fontWeight: 700 }}>执行录入</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        .glass-panel { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(12px); border-radius: 18px; border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+        .btn-primary { background: var(--btn-gradient); border: none; border-radius: 10px; color: #fff; font-weight: 700; cursor: pointer; transition: transform 0.2s; }
+        .btn-primary:active { transform: scale(0.98); }
+        .animate-slide-up { animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+      `}</style>
+    </div>
+  );
+};
+
+// ===== 顶层 App：鉴权门禁 =====
+const App = () => {
+  const [adminToken, setAdminToken] = useState<string | null>(
+    () => localStorage.getItem('admin_token')
+  );
+  const [adminInfo, setAdminInfo] = useState<{ username: string; role: string } | null>(
+    () => { try { return JSON.parse(localStorage.getItem('admin_info') || 'null'); } catch { return null; } }
+  );
+
+  const handleLogin = (token: string, admin: { username: string; role: string }) => {
+    setAdminToken(token);
+    setAdminInfo(admin);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('admin_token');
+    localStorage.removeItem('admin_info');
+    setAdminToken(null);
+    setAdminInfo(null);
+  };
+
+  if (!adminToken) {
+    return <AdminLogin onLogin={handleLogin} />;
+  }
+
+  return (
+    <div style={{ background: '#070b14', minHeight: '100vh' }}>
+      {/* 顶部身份栏 */}
+      <div style={{ background: 'rgba(0,0,0,0.4)', borderBottom: '1px solid rgba(255,255,255,0.05)', padding: '0.6rem 2rem', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '1rem' }}>
+        <span style={{ color: '#64748b', fontSize: '0.8rem' }}>
+          {adminInfo?.role} · <span style={{ color: '#a78bfa' }}>{adminInfo?.username}</span>
+        </span>
+        <button onClick={handleLogout} style={{ background: 'transparent', border: '1px solid #334155', color: '#94a3b8', padding: '0.3rem 0.8rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>
+          退出登录
+        </button>
+      </div>
+      <AdminDashboard />
+    </div>
+  );
+};
+
+export default App;
