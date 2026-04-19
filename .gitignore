@@ -25,6 +25,18 @@ api-server/*.json
 api-server/uploads/
 api-server/scratch/
 
+# 忽略 api-server 下所有的 json 数据文件
+api-server/users.json
+api-server/orders.json
+api-server/tasks.json
+api-server/ledger.json
+api-server/invoices.json
+api-server/tickets.json
+
+# 确保 package.json 绝对不会被忽略（即便上面写了通配符，这行也能把它捞回来）
+!api-server/package.json
+!api-server/package-lock.json
+
 # Artifacts & Local Dev
 docs/
 implementation_plan.md
