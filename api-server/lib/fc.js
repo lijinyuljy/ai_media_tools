@@ -46,8 +46,9 @@ class FCService {
         xFcInvocationType: 'Async', // 关键：异步调用，利用 FC 自带队列
       });
       
+      const { Readable } = require('stream');
       const invokeRequest = new FC.InvokeFunctionRequest({
-        body: TeaUtil.default.toBytes(JSON.stringify(payload)),
+        body: Readable.from(JSON.stringify(payload)),
       });
 
       const result = await this.client.invokeFunction(functionName, invokeRequest, invokeHeaders);
