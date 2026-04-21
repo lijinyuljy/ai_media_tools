@@ -147,8 +147,43 @@ app.post('/api/tasks/prompt', upload.single('image'), async (req, res) => {
           }
         }
     });
+});
   } catch (err) {
     res.status(500).json({ error: 'Failed to process prompt extraction' });
+  }
+});
+
+/**
+ * [TEST ONLY] 免密去水印测试接口
+ * 直接传入一个视频 URL 触发 FC 流程，跳过登录和上传
+ */
+app.post('/api/test/watermark', async (req, res) => {
+  const { inputUrl, taskId = `test_${Date.now()}` } = req.body;
+  if (!inputUrl) return res.status(400).json({ error: '需要输入 inputUrl' });
+
+  console.log(`[Test] 收到测试请求, taskId=${taskId}, url=${inputUrl}`);
+
+  try {
+    const functionName = 'watermark-remover';
+    const payload = {
+      taskId,
+      inputUrl,
+      type: 'clean',
+      engine: 'vsr',
+      callbackUrl: process.env.API_CALLBACK_URL
+    };
+
+    console.log(`[Test] 正在触发云函数: ${functionName}`);
+    await require('./lib/fc').invokeAsync(functionName, payload);
+    
+    res.json({
+      success: true,
+      message: '测试指令已发出，请观察终端日志中的 Webhook 回调',
+      taskId
+    });
+  } catch (err) {
+    console.error('[Test] 触发失败:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
