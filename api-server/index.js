@@ -1,43 +1,22 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const dotenv = require('dotenv');
 const fs = require('fs');
 const path = require('path');
 
 // 导入业务服务
 const taskService = require('./services/TaskService');
 
-dotenv.config();
+const db = require('./lib/db');
 
-// ===== 持久化配置文件 =====
+// ===== 持久化配置文件 (管理员配置暂时保留 JSON，以便快速热更新) =====
 const CONFIG_FILE = path.join(__dirname, 'config.json');
-const TASKS_FILE = path.join(__dirname, 'tasks.json');
 
 // 确保 uploads 目录存在
 if (!fs.existsSync(path.join(__dirname, 'uploads'))) {
   fs.mkdirSync(path.join(__dirname, 'uploads'), { recursive: true });
 }
-
-// ===== 持久化存储 (任务) =====
-const tasksDB = new Map();
-const saveTasks = () => {
-    try {
-        const data = Array.from(tasksDB.entries());
-        fs.writeFileSync(TASKS_FILE, JSON.stringify(data, null, 2));
-    } catch (e) { console.error('[DB] 任务数据保存失败:', e.message); }
-};
-
-// 加载初始任务
-try {
-    if (fs.existsSync(TASKS_FILE)) {
-        const data = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
-        data.forEach(([id, task]) => tasksDB.set(id, task));
-        console.log('[DB] 已从 tasks.json 恢复', tasksDB.size, '个任务');
-    }
-    // 初始化任务服务
-    taskService.setDatabase(tasksDB, saveTasks);
-} catch (e) { console.error('[DB] 加载 tasks.json 失败:', e); }
 
 const DEFAULT_SYSTEM_PROMPT = `You are an elite AI art director and prompt engineer with deep expertise in Stable Diffusion, Midjourney, FLUX, and DALL-E prompt crafting.
 
@@ -129,8 +108,7 @@ app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static('uploads'));
 
-// ===== 鉴权路由 & 数据库引用挂载 =====
-const { router: authRouter, authUser, usersDB, creditsLedger, saveUsers, saveLedger } = require('./routes/auth');
+const { router: authRouter, authUser } = require('./routes/auth');
 app.use('/api', authRouter);
 
 // Setup Multer for disk storage to statically serve back original user images
@@ -235,13 +213,16 @@ app.get('/api/admin/vlm-config', (req, res) => {
   res.json({ baseUrl: vlmConfig.baseUrl, modelName: vlmConfig.modelName, hasKey: !!vlmConfig.apiKey });
 });
 
-// GET all Tasks (限当前登录用户)
-app.get('/api/tasks', authUser, (req, res) => {
-  const userId = req.user.id;
-  const allTasks = Array.from(tasksDB.values())
-    .filter(t => t.userId === userId)
-    .sort((a,b) => b.createdAt - a.createdAt);
-  res.json({ tasks: allTasks });
+app.get('/api/tasks', authUser, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      'SELECT * FROM tasks WHERE user_id = $1 ORDER BY created_at DESC', 
+      [req.user.id]
+    );
+    res.json({ tasks: rows });
+  } catch (err) {
+    res.status(500).json({ error: '获取任务列表失败' });
+  }
 });
 
 /**
@@ -252,41 +233,31 @@ app.post('/api/webhook/fc', async (req, res) => {
   const { taskId, status, resultUrl, error, progress } = req.body;
   console.log(`[Webhook] 收到 FC 回调: taskId=${taskId}, status=${status}`);
   
-  const task = tasksDB.get(taskId);
-  if (task) {
-    if (status === 'completed') {
-      task.status = 'completed';
-      task.progress = 100;
-      task.resultUrl = resultUrl;
-    } else if (status === 'failed') {
-      task.status = 'failed';
-      task.error = error;
-    } else {
-      task.progress = progress || task.progress;
-    }
-    tasksDB.set(taskId, task);
-    saveTasks();
+  try {
+    await taskService.updateTask(taskId, {
+      status,
+      resultUrl,
+      error,
+      progress: progress || (status === 'completed' ? 100 : undefined)
+    });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Webhook 更新失败' });
   }
-  
-  res.json({ success: true });
 });
 
 
 // 路由：批量去水印 (已接入 TaskService 与 FC 调度)
 app.post('/api/tasks/watermark/batch', authUser, upload.any(), async (req, res) => {
+  const client = await db.getClient();
   try {
     const files = req.files;
     const body = req.body;
     const userId = req.user.id;
-    const user = usersDB.get(userId);
 
-    if (!user) return res.status(404).json({ error: '用户不存在' });
-    
-    let createdTasks = [];
-    let totalCost = 0;
-
-    // 1. 预检总计费
+    // 1. 预计算总计费
     let checkIndex = 0;
+    let totalCost = 0;
     while(body[`type_${checkIndex}`]) {
        const type = body[`type_${checkIndex}`];
        const engine = body[`engine_${checkIndex}`];
@@ -294,18 +265,27 @@ app.post('/api/tasks/watermark/batch', authUser, upload.any(), async (req, res) 
        checkIndex++;
     }
 
-    if (user.credits < totalCost) {
-       return res.status(402).json({ error: `积分不足 (需要 ${totalCost}, 当前 ${user.credits})`, required: totalCost, current: user.credits });
+    await client.query('BEGIN');
+
+    // 2. 预检积分并执行事务扣款
+    const { rows: userRows } = await client.query('SELECT credits FROM users WHERE id = $1 FOR UPDATE', [userId]);
+    const userCredits = userRows[0]?.credits || 0;
+
+    if (userCredits < totalCost) {
+       await client.query('ROLLBACK');
+       return res.status(402).json({ error: `积分不足 (需要 ${totalCost}, 当前 ${userCredits})` });
     }
 
-    // 2. 执行扣款
-    user.credits -= totalCost;
-    usersDB.set(userId, user);
-    saveUsers();
-    creditsLedger.push({ id: 'txn_' + Date.now(), userId, amount: -totalCost, type: 'consume', note: `批量去水印任务 (${checkIndex}项)`, createdAt: Date.now() });
-    saveLedger();
+    await client.query('UPDATE users SET credits = credits - $1 WHERE id = $2', [totalCost, userId]);
+    await client.query(
+      'INSERT INTO ledger (id, user_id, amount, type, note, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+      ['txn_' + Date.now(), userId, -totalCost, 'consume', `批量去水印任务 (${checkIndex}项)`, Date.now()]
+    );
 
-    // 3. 调度任务
+    await client.query('COMMIT');
+
+    // 3. 调度任务 (TaskService 内部会进行数据库 INSERT)
+    let createdTasks = [];
     let index = 0;
     while(body[`type_${index}`]) {
        const file = files.find(f => f.fieldname === `media_${index}`);
@@ -315,179 +295,140 @@ app.post('/api/tasks/watermark/batch', authUser, upload.any(), async (req, res) 
           const engine = body[`engine_${index}`];
           const cost = type === 'video' ? (engine === 'dynamic' ? 25 : 5) : 1;
 
-          // 调用任务中心进行真实异步调度
           const newTask = await taskService.createWatermarkTask({
-             taskId,
-             userId,
-             file,
-             type,
-             engine,
-             cost
+             taskId, userId, file, type, engine, cost
           });
-          
           createdTasks.push(newTask);
        }
        index++;
     }
 
-    res.json({
-      success: true,
-      tasks: createdTasks,
-      message: `${createdTasks.length} 个任务已成功进入云处理队列`
-    });
+    res.json({ success: true, tasks: createdTasks, message: `${createdTasks.length} 个任务已成功进入云处理队列` });
   } catch (err) {
+    if (client) await client.query('ROLLBACK');
     console.error(err);
     res.status(500).json({ error: 'Failed to queue watermark task' });
+  } finally {
+    if (client) client.release();
   }
 });
 
 // Mock Async Queue Endpoint for Batch Prompt Extraction
 app.post('/api/tasks/prompt/batch', authUser, upload.any(), async (req, res) => {
+  const client = await db.getClient();
   try {
     const files = req.files;
     const body = req.body;
     const userId = req.user.id;
-    const user = usersDB.get(userId);
 
-    if (!user) return res.status(404).json({ error: '用户不存在' });
-
-    let createdTasks = [];
     let index = 0;
-
-    // 视频 VLM 可能计费更高，这里暂时统一 1 Credits/张
-    const perTaskCost = 1;
     let totalCount = 0;
     while(body[`type_${index + totalCount}`]) { totalCount++; }
 
+    const perTaskCost = 1;
     const totalCost = totalCount * perTaskCost;
-    if (user.credits < totalCost) {
-       return res.status(402).json({ error: `积分不足 (需要 ${totalCost}, 当前 ${user.credits})` });
+
+    await client.query('BEGIN');
+    const { rows: userRows } = await client.query('SELECT credits FROM users WHERE id = $1 FOR UPDATE', [userId]);
+    const currentCredits = userRows[0]?.credits || 0;
+
+    if (currentCredits < totalCost) {
+      await client.query('ROLLBACK');
+      return res.status(402).json({ error: `积分不足 (需要 ${totalCost}, 当前 ${currentCredits})` });
     }
 
-    // 执行扣款
-    user.credits -= totalCost;
-    usersDB.set(userId, user);
-    saveUsers();
-    creditsLedger.push({ id: 'txn_' + Date.now(), userId, amount: -totalCost, type: 'consume', note: `批量AI反推任务 (${totalCount}项)`, createdAt: Date.now() });
-    saveLedger();
+    await client.query('UPDATE users SET credits = credits - $1 WHERE id = $2', [totalCost, userId]);
+    await client.query(
+      'INSERT INTO ledger (id, user_id, amount, type, note, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+      ['txn_' + Date.now(), userId, -totalCost, 'consume', `批量AI反推任务 (${totalCount}项)`, Date.now()]
+    );
+    await client.query('COMMIT');
 
+    let createdTasks = [];
     index = 0;
     while(body[`type_${index}`]) {
        const file = files.find(f => f.fieldname === `media_${index}`);
        if (file && file.originalname) {
           const taskId = `task_${Date.now()}_p${index}`;
           const decodedName = Buffer.from(file.originalname, 'latin1').toString('utf8');
-          const cost = perTaskCost;
 
-          const newTask = {
-             taskId,
-             userId, // 绑定用户 ID
-             fileName: decodedName,
-             originalUrl: `http://localhost:3000/uploads/${file.filename}`, // 保存公开静态链接
-             type: 'prompt',
-             status: 'queuing', 
-             progress: 0,
-             eta_seconds: 15,
-             cost,
-             createdAt: Date.now(),
-             resultText: null 
-          };
+          await db.query(
+            'INSERT INTO tasks (task_id, user_id, file_name, type, status, progress, cost, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+            [taskId, userId, decodedName, 'prompt', 'queuing', 0, perTaskCost, Date.now()]
+          );
           
-          tasksDB.set(taskId, newTask);
-          createdTasks.push(newTask);
-          saveTasks();
+          createdTasks.push({ taskId, status: 'queuing' });
           
-          // --- 动态 VLM 调用（读取管理台配置）---
-          setTimeout(async () => {
-              const t = tasksDB.get(taskId);
-              if(t) { t.status = 'processing'; t.progress = 20; tasksDB.set(taskId, t); saveTasks(); }
-              
-              let finalPrompt = '';
-
-              if (vlmConfig.apiKey && vlmConfig.apiKey.length > 5) {
-                  const fs = require('fs');
-                  const imageAsBase64 = fs.readFileSync(file.path, 'base64');
-                  const endpoint = `${vlmConfig.baseUrl.replace(/\/$/, '')}/chat/completions`;
-                  console.log(`[VLM] -> ${endpoint}, model=${vlmConfig.modelName}`);
-                  try {
-                      const response = await fetch(endpoint, {
-                          method: "POST",
-                          headers: {
-                              "Content-Type": "application/json",
-                              "Authorization": `Bearer ${vlmConfig.apiKey}`
-                          },
-                          body: JSON.stringify({
-                              model: vlmConfig.modelName,
-                              messages: [
-                                { "role": "system", "content": vlmSystemPrompt },
-                                  {
-                                    "role": "user",
-                                    "content": [
-                                      { "type": "text", "text": "Please analyze this image and generate the output strictly following the system instructions provided." },
-                                      { "type": "image_url", "image_url": { "url": `data:${file.mimetype};base64,${imageAsBase64}` } }
-                                    ]
-                                  }
-                                ],
-                                max_tokens: 1000
-                            })
-                        });
-                            const data = await response.json();
-                            console.log('[VLM] 响应片段:', JSON.stringify(data).slice(0, 300));
-                            if (data.choices && data.choices[0]) {
-                                let raw = data.choices[0].message.content.trim();
-                                
-                                // 移除 Markdown 代码块包裹 (如 ```json ... ```)
-                                raw = raw.replace(/^```[a-z]*\n/i, '').replace(/\n```$/m, '').trim();
-
-                                // 智能解析：如果内容看起来像 JSON，尝试美化；否则直接作为文本输出
-                                try {
-                                    if (raw.startsWith('{') && raw.endsWith('}')) {
-                                        const parsed = JSON.parse(raw);
-                                        // 兼容性逻辑：如果用户依然输出了包含 prompt 字段的简单 JSON，直接提取其内容
-                                        if (parsed.prompt && Object.keys(parsed).length <= 3) {
-                                            finalPrompt = parsed.prompt;
-                                        } else {
-                                            finalPrompt = JSON.stringify(parsed, null, 2);
-                                        }
-                                    } else {
-                                        finalPrompt = raw;
-                                    }
-                                } catch {
-                                    finalPrompt = raw;
-                                }
-                            } else {
-                                finalPrompt = `模型返回异常:\n${JSON.stringify(data, null, 2)}`;
-                            }
-                        } catch (e) {
-                            console.error('[VLM] 请求失败:', e);
-                            finalPrompt = "API 请求失败: " + String(e);
-                        }
-              } else {
-                  await new Promise(r => setTimeout(r, 2000));
-                  finalPrompt = `⚠️ 未在管理后台配置有效的 API Key。\n请前往 后管调度中心 → 外部 API 提供商 → 编辑 → 填入密钥后点击"保存全局路由规则"。\n\n[Mock 结果] A visually stunning cinematic shot, intricate details, neon light volumetric rendering...`;
-              }
-
-              // Set completion status
-              const ft = tasksDB.get(taskId);
-              if(ft) { 
-                 ft.status = 'completed'; 
-                 ft.progress = 100; 
-                 ft.resultText = finalPrompt;
-                 tasksDB.set(taskId, ft); 
-                 saveTasks();
-              }
-          }, 1500 + (index * 1000));
+          // --- 异步 VLM 调用流程 ---
+          app._runVlmPromptLogic(taskId, file);
        }
        index++;
     }
 
     res.json({ success: true, tasks: createdTasks });
   } catch (err) {
+    if (client) await client.query('ROLLBACK');
     console.error(err);
     res.status(500).json({ error: 'Failed to queue prompt task' });
+  } finally {
+    if (client) client.release();
   }
 });
 
+// 辅助方法：处理 VLM 反推逻辑
+app._runVlmPromptLogic = async (taskId, file) => {
+    try {
+        await taskService.updateTask(taskId, { status: 'processing', progress: 20 });
+        
+        let finalPrompt = '';
+        if (vlmConfig.apiKey && vlmConfig.apiKey.length > 5) {
+            try {
+                const fs = require('fs');
+                const imageAsBase64 = fs.readFileSync(file.path, 'base64');
+                const endpoint = `${vlmConfig.baseUrl.replace(/\/$/, '')}/chat/completions`;
+                const response = await fetch(endpoint, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${vlmConfig.apiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: vlmConfig.modelName,
+                        messages: [
+                            { "role": "system", "content": vlmSystemPrompt },
+                            {
+                                "role": "user",
+                                "content": [
+                                    { "type": "text", "text": "Please analyze this image and generate the output strictly following instructions." },
+                                    { "type": "image_url", "image_url": { "url": `data:${file.mimetype};base64,${imageAsBase64}` } }
+                                ]
+                            }
+                        ],
+                        max_tokens: 1000
+                    })
+                });
+                const data = await response.json();
+                if (data.choices && data.choices[0]) {
+                    finalPrompt = data.choices[0].message.content.trim().replace(/^```[a-z]*\n/i, '').replace(/\n```$/m, '').trim();
+                } else {
+                    finalPrompt = `ERROR: ${JSON.stringify(data)}`;
+                }
+            } catch (e) {
+                finalPrompt = "API Request failed: " + String(e);
+            }
+        } else {
+            finalPrompt = "⚠️ No API Key configured. [Mock Result] Cinematic shot of a futuristic city.";
+        }
+
+        await taskService.updateTask(taskId, { 
+            status: 'completed', 
+            progress: 100, 
+            resultText: finalPrompt 
+        });
+    } catch (err) {
+        console.error(`[VLM Error] task ${taskId}:`, err.message);
+    }
+};
 // Listen on port
 app.listen(port, () => {
   console.log(`[CN API] Server running on http://localhost:${port}`);

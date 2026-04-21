@@ -1,0 +1,23 @@
+edition: 3.0.0
+name: wst-ai-tools
+access: default
+
+resources:
+  watermark_remover:
+    component: fc3
+    props:
+      region: cn-hangzhou
+      functionName: watermark-remover
+      description: 'Winspacetime AI 去水印处理函数'
+      runtime: custom-container
+      timeout: 600
+      memorySize: 2048 # 建议起步 2GB，如果是 GPU 任务需调整
+      cpu: 1.0
+      # 镜像配置
+      customContainerConfig:
+        image: 'registry.cn-hangzhou.aliyuncs.com/wst-ai-models/ai-watermark:latest'
+        port: 9000
+      # 如果需要访问 OSS，可以注入 AccessKey (从 .env 获取)
+      environmentVariables:
+        OSS_ENDPOINT: 'oss-cn-hangzhou.aliyuncs.com'
+        # 注意：生产环境建议使用 RAM 角色授权，此处为演示直接注入

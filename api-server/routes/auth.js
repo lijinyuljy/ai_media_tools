@@ -38,83 +38,9 @@ const ADMIN_TOKEN_TTL = '4h';
 
 const fs = require('fs');
 const path = require('path');
+const db = require('../lib/db');
 
-// ===== 持久化文件路径 =====
-const USERS_FILE = path.join(__dirname, '..', 'users.json');
-const LEDGER_FILE = path.join(__dirname, '..', 'ledger.json');
-const ORDERS_FILE = path.join(__dirname, '..', 'orders.json');
-const INVOICES_FILE = path.join(__dirname, '..', 'invoices.json');
-const TICKETS_FILE = path.join(__dirname, '..', 'tickets.json');
-
-// ===== In-Memory Stores (由文件恢复) =====
-const usersDB = new Map();
-const adminsDB = new Map();
-let creditsLedger = [];
-let ordersDB = [];
-let invoicesDB = [];
-let ticketsDB = [];
-
-// 数据持久化核心函数
-const saveUsers = () => {
-    try {
-        const data = Array.from(usersDB.entries());
-        fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
-    } catch (e) { console.error('[DB] 用户数据保存失败:', e.message); }
-};
-
-const saveLedger = () => {
-    try {
-        fs.writeFileSync(LEDGER_FILE, JSON.stringify(creditsLedger, null, 2));
-    } catch (e) { console.error('[DB] 流水数据保存失败:', e.message); }
-};
-
-const saveOrders = () => {
-    try { fs.writeFileSync(ORDERS_FILE, JSON.stringify(ordersDB, null, 2)); }
-    catch (e) { console.error('[DB] 订单数据保存失败:', e.message); }
-};
-
-const saveInvoices = () => {
-    try { fs.writeFileSync(INVOICES_FILE, JSON.stringify(invoicesDB, null, 2)); }
-    catch (e) { console.error('[DB] 发票数据保存失败:', e.message); }
-};
-
-const saveTickets = () => {
-    try { fs.writeFileSync(TICKETS_FILE, JSON.stringify(ticketsDB, null, 2)); }
-    catch (e) { console.error('[DB] 工单数据保存失败:', e.message); }
-};
-
-// 数据加载初始化
-try {
-    if (fs.existsSync(USERS_FILE)) {
-        const data = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
-        data.forEach(([id, user]) => usersDB.set(id, user));
-        console.log('[DB] 已从 users.json 恢复', usersDB.size, '个用户');
-    }
-} catch (e) { console.error('[DB] 加载 users.json 失败:', e); }
-
-try {
-    if (fs.existsSync(LEDGER_FILE)) {
-        creditsLedger = JSON.parse(fs.readFileSync(LEDGER_FILE, 'utf8'));
-        console.log('[DB] 已从 ledger.json 恢复', creditsLedger.length, '条流水');
-    }
-} catch (e) { console.error('[DB] 加载 ledger.json 失败:', e); }
-
-const loadDB = (file, dbName) => {
-    try {
-        if (fs.existsSync(file)) {
-            const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-            console.log(`[DB] 已从 ${path.basename(file)} 恢复 ${data.length} 条${dbName}`);
-            return data;
-        }
-    } catch (e) { console.error(`[DB] 加载 ${file} 失败:`, e.message); }
-    return [];
-};
-
-ordersDB = loadDB(ORDERS_FILE, '订单');
-invoicesDB = loadDB(INVOICES_FILE, '发票');
-ticketsDB = loadDB(TICKETS_FILE, '工单');
-
-// ===== 登录失败频率限制（防暴力破解）=====
+// ===== 登录失败频率限制（防暴力破解 - 内存保留或后续迁至 Redis）=====
 const loginAttempts = new Map(); // key -> { count, resetAt }
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS = 15 * 60 * 1000; // 15分钟
@@ -139,43 +65,40 @@ const recordFailedAttempt = (key) => {
 
 const clearAttempts = (key) => loginAttempts.delete(key);
 
-// ===== 初始化超管账号（密码来自 ADMIN_INITIAL_PASSWORD.txt，非硬编码）=====
 const SUPER_ADMIN_ID = 'adm_super';
 const SUPER_ADMIN_USERNAME = process.env.ADMIN_INIT_USERNAME || 'superadmin';
 
-// 从 config.json 读取已保存的 admin hash，否则使用生成的初始 hash
-const adminPwdFile = path.join(__dirname, '..', 'admin_hash.secret');
-
+// 初始化超管检测 (确保管理员表中有超管)
 (async () => {
-  let hash;
-  if (fs.existsSync(adminPwdFile)) {
-    hash = fs.readFileSync(adminPwdFile, 'utf8').trim();
-    console.log('[Auth] 超管账号已从安全文件恢复');
-  } else {
-    // 首次启动：读取初始密码文件生成 hash
-    const pwdFile = path.join(__dirname, '..', 'ADMIN_INITIAL_PASSWORD.txt');
-    if (fs.existsSync(pwdFile)) {
-      const content = fs.readFileSync(pwdFile, 'utf8');
-      const match = content.match(/初始密码: (.+)/);
-      if (match) {
-        hash = await bcrypt.hash(match[1].trim(), 12);
-        fs.writeFileSync(adminPwdFile, hash);
-        console.log(`[Auth] 超管账号已初始化: ${SUPER_ADMIN_USERNAME} (查看 ADMIN_INITIAL_PASSWORD.txt)`);
+  try {
+    const { rows } = await db.query('SELECT * FROM admins WHERE id = $1', [SUPER_ADMIN_ID]);
+    if (rows.length === 0) {
+      const pwdFile = path.join(__dirname, '..', 'ADMIN_INITIAL_PASSWORD.txt');
+      let hash;
+      const adminPwdFile = path.join(__dirname, '..', 'admin_hash.secret');
+      
+      if (fs.existsSync(adminPwdFile)) {
+        hash = fs.readFileSync(adminPwdFile, 'utf8').trim();
+      } else if (fs.existsSync(pwdFile)) {
+        const content = fs.readFileSync(pwdFile, 'utf8');
+        const match = content.match(/初始密码: (.+)/);
+        if (match) {
+          hash = await bcrypt.hash(match[1].trim(), 12);
+          fs.writeFileSync(adminPwdFile, hash);
+        }
+      }
+
+      if (hash) {
+        await db.query(
+          'INSERT INTO admins (id, username, password_hash, role, created_at) VALUES ($1, $2, $3, $4, $5)',
+          [SUPER_ADMIN_ID, SUPER_ADMIN_USERNAME, hash, 'SuperAdmin', Date.now()]
+        );
+        console.log(`[Auth] 管理员表初始化: ${SUPER_ADMIN_USERNAME} 已入库`);
       }
     }
-    if (!hash) {
-      console.error('[Auth] ❌ 无法初始化超管账号，请确保 ADMIN_INITIAL_PASSWORD.txt 存在');
-      process.exit(1);
-    }
+  } catch (e) {
+    console.error('[Auth] 初始化 RDS 管理员失败:', e.message);
   }
-
-  adminsDB.set(SUPER_ADMIN_ID, {
-    id: SUPER_ADMIN_ID,
-    username: SUPER_ADMIN_USERNAME,
-    passwordHash: hash,
-    role: 'SuperAdmin',
-    createdAt: Date.now()
-  });
 })();
 
 
@@ -224,32 +147,34 @@ router.post('/auth/register', async (req, res) => {
   if (!email || !password) return res.status(400).json({ error: '邮箱和密码不能为空' });
   if (password.length < 6) return res.status(400).json({ error: '密码至少 6 位' });
 
-  const existing = [...usersDB.values()].find(u => u.email === email);
-  if (existing) return res.status(409).json({ error: '该邮箱已注册' });
+  try {
+    const { rows: existing } = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (existing.length > 0) return res.status(409).json({ error: '该邮箱已注册' });
 
-  const id = 'usr_' + Date.now();
-  const passwordHash = await bcrypt.hash(password, 10);
-  const user = {
-    id,
-    email,
-    nickname: nickname || email.split('@')[0],
-    passwordHash,
-    credits: 50,   // 初始赠送 50 Credits
-    role: 'user',
-    createdAt: Date.now()
-  };
-  usersDB.set(id, user);
-  saveUsers();
+    const id = 'usr_' + Date.now();
+    const passwordHash = await bcrypt.hash(password, 10);
+    const initialCredits = 50;
 
-  // 写入赠送积分流水
-  creditsLedger.push({ id: 'txn_' + Date.now(), userId: id, amount: +50, type: 'gift', note: '新用户注册赠送', createdAt: Date.now() });
-  saveLedger();
+    await db.query(
+      'INSERT INTO users (id, email, nickname, password_hash, credits, role, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [id, email, nickname || email.split('@')[0], passwordHash, initialCredits, 'user', Date.now()]
+    );
 
-  const token = signUserToken(user);
-  res.status(201).json({
-    token,
-    user: { id, email, nickname: user.nickname, credits: user.credits, role: user.role }
-  });
+    // 写入赠送积分流水
+    await db.query(
+      'INSERT INTO ledger (id, user_id, amount, type, note, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+      ['txn_' + Date.now(), id, initialCredits, 'gift', '新用户注册赠送', Date.now()]
+    );
+
+    const token = signUserToken({ id, role: 'user' });
+    res.status(201).json({
+      token,
+      user: { id, email, nickname: nickname || email.split('@')[0], credits: initialCredits, role: 'user' }
+    });
+  } catch (err) {
+    console.error('[Auth] 注册失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
 });
 
 // ─── 用户登录 ─────────────────────────────────────────
@@ -261,36 +186,48 @@ router.post('/auth/login', async (req, res) => {
   const rl = checkRateLimit(`login:${email}`);
   if (rl.blocked) return res.status(429).json({ error: `登录尝试次数过多，请 ${rl.remaining} 分钟后再试` });
 
-  const user = [...usersDB.values()].find(u => u.email === email);
-  if (!user) { recordFailedAttempt(`login:${email}`); return res.status(401).json({ error: '邮箱或密码错误' }); }
+  try {
+    const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    const user = rows[0];
+    if (!user) { recordFailedAttempt(`login:${email}`); return res.status(401).json({ error: '邮箱或密码错误' }); }
 
-  const ok = await bcrypt.compare(password, user.passwordHash);
-  if (!ok) { recordFailedAttempt(`login:${email}`); return res.status(401).json({ error: '邮箱或密码错误' }); }
+    const ok = await bcrypt.compare(password, user.password_hash);
+    if (!ok) { recordFailedAttempt(`login:${email}`); return res.status(401).json({ error: '邮箱或密码错误' }); }
 
-  clearAttempts(`login:${email}`);
-  const token = signUserToken(user);
-  res.json({
-    token,
-    user: { id: user.id, email: user.email, nickname: user.nickname, credits: user.credits, role: user.role }
-  });
+    clearAttempts(`login:${email}`);
+    const token = signUserToken(user);
+    res.json({
+      token,
+      user: { id: user.id, email: user.email, nickname: user.nickname, credits: user.credits, role: user.role }
+    });
+  } catch (err) {
+    res.status(500).json({ error: '登录服务异常' });
+  }
 });
 
 // ─── 获取当前用户信息 ──────────────────────────────────
 
-router.get('/auth/me', authUser, (req, res) => {
-  const user = usersDB.get(req.user.id);
-  if (!user) return res.status(404).json({ error: '用户不存在' });
-  res.json({ id: user.id, email: user.email, nickname: user.nickname, credits: user.credits, role: user.role });
+router.get('/auth/me', authUser, async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT id, email, nickname, credits, role FROM users WHERE id = $1', [req.user.id]);
+    const user = rows[0];
+    if (!user) return res.status(404).json({ error: '用户不存在' });
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: '获取用户信息失败' });
+  }
 });
 
 // ─── 获取用户积分流水 ──────────────────────────────────
 
-router.get('/user/credits/ledger', authUser, (req, res) => {
-  const userLedger = creditsLedger
-    .filter(t => t.userId === req.user.id)
-    .sort((a, b) => b.createdAt - a.createdAt);
-  const user = usersDB.get(req.user.id);
-  res.json({ credits: user?.credits || 0, ledger: userLedger });
+router.get('/user/credits/ledger', authUser, async (req, res) => {
+  try {
+    const { rows: ledger } = await db.query('SELECT * FROM ledger WHERE user_id = $1 ORDER BY created_at DESC', [req.user.id]);
+    const { rows: userRows } = await db.query('SELECT credits FROM users WHERE id = $1', [req.user.id]);
+    res.json({ credits: userRows[0]?.credits || 0, ledger });
+  } catch (err) {
+    res.status(500).json({ error: '读取流水失败' });
+  }
 });
 
 // ─── 管理员登录（独立密码体系） ────────────────────────
@@ -302,57 +239,80 @@ router.post('/admin/auth/login', async (req, res) => {
   const rl = checkRateLimit(`admin:${username}`);
   if (rl.blocked) return res.status(429).json({ error: `登录尝试次数过多，请 ${rl.remaining} 分钟后再试` });
 
-  const admin = [...adminsDB.values()].find(a => a.username === username);
-  if (!admin) { recordFailedAttempt(`admin:${username}`); return res.status(401).json({ error: '账号或密码错误' }); }
+  try {
+    const { rows } = await db.query('SELECT * FROM admins WHERE username = $1', [username]);
+    const admin = rows[0];
+    if (!admin) { recordFailedAttempt(`admin:${username}`); return res.status(401).json({ error: '账号或密码错误' }); }
 
-  const ok = await bcrypt.compare(password, admin.passwordHash);
-  if (!ok) { recordFailedAttempt(`admin:${username}`); return res.status(401).json({ error: '账号或密码错误' }); }
+    const ok = await bcrypt.compare(password, admin.password_hash);
+    if (!ok) { recordFailedAttempt(`admin:${username}`); return res.status(401).json({ error: '账号或密码错误' }); }
 
-  clearAttempts(`admin:${username}`);
-  const token = signAdminToken(admin);
-  console.log(`[Auth] 管理员登录成功: ${username} [${new Date().toISOString()}]`);
-  res.json({
-    token,
-    admin: { id: admin.id, username: admin.username, role: admin.role }
-  });
+    clearAttempts(`admin:${username}`);
+    const token = signAdminToken(admin);
+    res.json({
+      token,
+      admin: { id: admin.id, username: admin.username, role: admin.role }
+    });
+  } catch (err) {
+    res.status(500).json({ error: '管理员登录异常' });
+  }
 });
 
 // ─── 获取当前管理员信息 ────────────────────────────────
 
-router.get('/admin/auth/me', authAdmin(), (req, res) => {
-  const admin = adminsDB.get(req.admin.id);
-  if (!admin) return res.status(404).json({ error: '管理员不存在' });
-  res.json({ id: admin.id, username: admin.username, role: admin.role });
+router.get('/admin/auth/me', authAdmin(), async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT id, username, role FROM admins WHERE id = $1', [req.admin.id]);
+    const admin = rows[0];
+    if (!admin) return res.status(404).json({ error: '管理员不存在' });
+    res.json(admin);
+  } catch (err) {
+    res.status(500).json({ error: '获取信息失败' });
+  }
 });
 
 // ─── 管理员：查看所有用户 ──────────────────────────────
 
-router.get('/admin/users', authAdmin('Operator'), (req, res) => {
-  const users = [...usersDB.values()].map(u => ({
-    id: u.id, email: u.email, nickname: u.nickname, credits: u.credits, createdAt: u.createdAt
-  }));
-  res.json({ users, total: users.length });
+router.get('/admin/users', authAdmin('Operator'), async (req, res) => {
+  try {
+    const { rows: users } = await db.query('SELECT id, email, nickname, credits, created_at FROM users ORDER BY created_at DESC');
+    res.json({ users, total: users.length });
+  } catch (err) {
+    res.status(500).json({ error: '读取用户列表失败' });
+  }
 });
 
 // ─── 管理员：调整用户积分（需 SuperAdmin） ─────────────
 
-router.patch('/admin/users/:userId/credits', authAdmin('SuperAdmin'), (req, res) => {
+router.patch('/admin/users/:userId/credits', authAdmin('SuperAdmin'), async (req, res) => {
   const { userId } = req.params;
   const { delta, note } = req.body;
   if (typeof delta !== 'number') return res.status(400).json({ error: 'delta 必须是数字' });
 
-  const user = usersDB.get(userId);
-  if (!user) return res.status(404).json({ error: '用户不存在' });
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    
+    const { rows } = await client.query('UPDATE users SET credits = credits + $1 WHERE id = $2 RETURNING credits', [delta, userId]);
+    if (rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: '用户不存在' });
+    }
 
-  user.credits += delta;
-  usersDB.set(userId, user);
-  saveUsers();
+    const txnId = 'txn_' + Date.now();
+    await client.query(
+      'INSERT INTO ledger (id, user_id, amount, type, note, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+      [txnId, userId, delta, delta > 0 ? 'admin_credit' : 'admin_debit', note || '管理员手动调整', Date.now()]
+    );
 
-  const txn = { id: 'txn_' + Date.now(), userId, amount: delta, type: delta > 0 ? 'admin_credit' : 'admin_debit', note: note || '管理员手动调整', operatorId: req.admin.id, createdAt: Date.now() };
-  creditsLedger.push(txn);
-  saveLedger();
-
-  res.json({ success: true, newCredits: user.credits, txn });
+    await client.query('COMMIT');
+    res.json({ success: true, newCredits: rows[0].credits, txnId });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: '调整积分失败' });
+  } finally {
+    client.release();
+  }
 });
 
 // ─── 扩展：手机验证码登录 (Mock) ─────────────────────────
@@ -435,228 +395,255 @@ router.get('/auth/wechat/check', (req, res) => {
 
 // ─── 扩展：计费与充值 (Mock) ──────────────────────────
 
-router.post('/billing/recharge', authUser, (req, res) => {
-  const user = usersDB.get(req.user.id);
-  if (!user) return res.status(404).json({ error: '用户不存在' });
-
+router.post('/billing/recharge', authUser, async (req, res) => {
+  const userId = req.user.id;
   const amount = 100; // 模拟固定充值包
-  user.credits += amount;
-  usersDB.set(user.id, user);
-  saveUsers();
+  const price = 9.9;
 
-  const txnId = 'txn_' + Date.now();
-  const txn = { id: txnId, userId: user.id, amount, type: 'recharge', note: '微信/支付宝充值', createdAt: Date.now() };
-  creditsLedger.push(txn);
-  saveLedger();
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
 
-  // 创建同步订单记录
-  const order = { id: 'ord_' + Date.now(), userId: user.id, amount: 9.9, credits: amount, status: 'paid', paymentMethod: 'WeChatPay', createdAt: Date.now() };
-  ordersDB.push(order);
-  saveOrders();
+    const { rows } = await client.query('UPDATE users SET credits = credits + $1 WHERE id = $2 RETURNING credits', [amount, userId]);
+    const txnId = 'txn_' + Date.now();
+    await client.query(
+      'INSERT INTO ledger (id, user_id, amount, type, note, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+      [txnId, userId, amount, 'recharge', '微信/支付宝充值', Date.now()]
+    );
 
-  res.json({ success: true, newCredits: user.credits, message: `成功充值 ${amount} 点数`, order });
+    const orderId = 'ord_' + Date.now();
+    await client.query(
+      'INSERT INTO orders (id, user_id, amount, credits, status, payment_method, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [orderId, userId, price, amount, 'paid', 'WeChatPay', Date.now()]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true, newCredits: rows[0].credits, message: `成功充值 ${amount} 点数` });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: '充值处理失败' });
+  } finally {
+    client.release();
+  }
 });
 
-router.post('/billing/watch-ad', authUser, (req, res) => {
-  const user = usersDB.get(req.user.id);
-  if (!user) return res.status(404).json({ error: '用户不存在' });
+router.post('/billing/watch-ad', authUser, async (req, res) => {
+  const userId = req.user.id;
+  const reward = 5;
 
-  const reward = 5; // 每次广告奖励 5 点
-  user.credits += reward;
-  usersDB.set(user.id, user);
-  saveUsers();
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query('UPDATE users SET credits = credits + $1 WHERE id = $2 RETURNING credits', [reward, userId]);
+    
+    await client.query(
+      'INSERT INTO ledger (id, user_id, amount, type, note, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+      ['txn_' + Date.now(), userId, reward, 'ad_reward', '观看广告激励', Date.now()]
+    );
 
-  // 记录点数流水
-  const txn = { id: 'txn_' + Date.now(), userId: user.id, amount: reward, type: 'ad_reward', note: '观看广告激励', createdAt: Date.now() };
-  creditsLedger.push(txn);
-  saveLedger();
+    await client.query(
+      'INSERT INTO orders (id, user_id, amount, credits, status, payment_method, estimated_revenue, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      ['ord_ad_' + Date.now(), userId, 0, reward, 'paid', 'AdReward', 0.8, Date.now()]
+    );
 
-  // 记录广告订单 (账目对齐与收益预估)
-  const adOrder = {
-    id: 'ord_ad_' + Date.now(),
-    userId: user.id,
-    amount: 0, // 用户实付
-    credits: reward,
-    status: 'paid',
-    paymentMethod: 'AdReward',
-    estimatedRevenue: 0.8, // 管理侧预估收益 (¥0.8/次)
-    createdAt: Date.now()
-  };
-  ordersDB.push(adOrder);
-  saveOrders();
-
-  console.log('[DEBUG] WATCH-AD SUCCESS: userId=%s, reward=%d, orderId=%s', user.id, reward, adOrder.id);
-  res.json({ success: true, newCredits: user.credits, message: `观看完成，获得 ${reward} 点数奖励` });
+    await client.query('COMMIT');
+    res.json({ success: true, newCredits: rows[0].credits, message: `观看完成，获得 ${reward} 点数奖励` });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: '奖励发放失败' });
+  } finally {
+    client.release();
+  }
 });
 
 // ─── 新增：订单系统 ──────────────────────────────────────
 
-router.get('/user/orders', authUser, (req, res) => {
-  const list = ordersDB.filter(o => o.userId === req.user.id).sort((a,b) => b.createdAt - a.createdAt);
-  res.json({ orders: list });
+router.get('/user/orders', authUser, async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC', [req.user.id]);
+    res.json({ orders: rows });
+  } catch (err) {
+    res.status(500).json({ error: '获取订单失败' });
+  }
 });
 
-router.get('/admin/orders', authAdmin('Operator'), (req, res) => {
-  res.json({ orders: ordersDB.slice().sort((a,b) => b.createdAt - a.createdAt) });
+router.get('/admin/orders', authAdmin('Operator'), async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM orders ORDER BY created_at DESC');
+    res.json({ orders: rows });
+  } catch (err) {
+    res.status(500).json({ error: '读取订单库失败' });
+  }
 });
 
-router.patch('/admin/orders/:id', authAdmin('SuperAdmin'), (req, res) => {
+router.patch('/admin/orders/:id', authAdmin('SuperAdmin'), async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
-  const order = ordersDB.find(o => o.id === id);
-  if (!order) return res.status(404).json({ error: '订单未找到' });
-  order.status = status;
-  saveOrders();
-  res.json({ success: true });
+  try {
+    await db.query('UPDATE orders SET status = $1 WHERE id = $2', [status, id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: '更新订单失败' });
+  }
 });
 
 // ─── 新增：发票系统 ──────────────────────────────────────
 
-router.post('/user/invoices', authUser, (req, res) => {
+router.post('/user/invoices', authUser, async (req, res) => {
   const { orderId, companyName, taxId, email } = req.body;
   if (!orderId || !companyName || !taxId) return res.status(400).json({ error: '信息不完整' });
 
-  const order = ordersDB.find(o => o.id === orderId && o.userId === req.user.id);
-  if (!order) return res.status(404).json({ error: '订单无效' });
+  try {
+    const { rows: orderRows } = await db.query('SELECT * FROM orders WHERE id = $1 AND user_id = $2', [orderId, req.user.id]);
+    const order = orderRows[0];
+    if (!order) return res.status(404).json({ error: '订单无效' });
 
-  // 检查是否已开票
-  const exists = invoicesDB.find(i => i.orderId === orderId);
-  if (exists) return res.status(409).json({ error: '该订单已申请过发票' });
+    const { rows: exists } = await db.query('SELECT * FROM invoices WHERE order_id = $1', [orderId]);
+    if (exists.length > 0) return res.status(409).json({ error: '该订单已申请过发票' });
 
-  const invoice = {
-    id: 'inv_' + Date.now(),
-    orderId,
-    userId: req.user.id,
-    amount: order.amount,
-    companyName,
-    taxId,
-    email,
-    status: 'pending',
-    createdAt: Date.now()
-  };
-  invoicesDB.push(invoice);
-  saveInvoices();
-  res.json({ success: true, invoice });
+    const id = 'inv_' + Date.now();
+    await db.query(
+      'INSERT INTO invoices (id, order_id, user_id, amount, company_name, tax_id, email, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+      [id, orderId, req.user.id, order.amount, companyName, taxId, email, 'pending', Date.now()]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: '申报发票失败' });
+  }
 });
 
-router.get('/user/invoices', authUser, (req, res) => {
-  const list = invoicesDB.filter(i => i.userId === req.user.id).sort((a,b) => b.createdAt - a.createdAt);
-  res.json({ invoices: list });
+router.get('/user/invoices', authUser, async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM invoices WHERE user_id = $1 ORDER BY created_at DESC', [req.user.id]);
+    res.json({ invoices: rows });
+  } catch (err) {
+    res.status(500).json({ error: '获取发票列表失败' });
+  }
 });
 
-router.get('/admin/invoices', authAdmin('Operator'), (req, res) => {
-  res.json({ invoices: invoicesDB.slice().sort((a,b) => b.createdAt - a.createdAt) });
+router.get('/admin/invoices', authAdmin('Operator'), async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM invoices ORDER BY created_at DESC');
+    res.json({ invoices: rows });
+  } catch (err) {
+    res.status(500).json({ error: '读取发票库失败' });
+  }
 });
 
-router.patch('/admin/invoices/:id', authAdmin('Operator'), (req, res) => {
+router.patch('/admin/invoices/:id', authAdmin('Operator'), async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
-  const inv = invoicesDB.find(i => i.id === id);
-  if (!inv) return res.status(404).json({ error: '发票记录未找到' });
-  inv.status = status;
-  saveInvoices();
-  res.json({ success: true });
+  try {
+    await db.query('UPDATE invoices SET status = $1 WHERE id = $2', [status, id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: '修改发票状态失败' });
+  }
 });
 
-router.post('/admin/invoices/:id/upload', authAdmin('Operator'), upload.single('invoice'), (req, res) => {
+router.post('/admin/invoices/:id/upload', authAdmin('Operator'), upload.single('invoice'), async (req, res) => {
   const { id } = req.params;
-  const inv = invoicesDB.find(i => i.id === id);
-  if (!inv) return res.status(404).json({ error: '发票记录未找到' });
-  
   if (!req.file) return res.status(400).json({ error: '请选择文件上传' });
   
-  inv.fileUrl = `/uploads/invoices/${req.file.filename}`;
-  inv.status = 'sent';
-  saveInvoices();
-  res.json({ success: true, fileUrl: inv.fileUrl });
+  const fileUrl = `/uploads/invoices/${req.file.filename}`;
+  try {
+    await db.query('UPDATE invoices SET file_url = $1, status = $2 WHERE id = $3', [fileUrl, 'sent', id]);
+    res.json({ success: true, fileUrl });
+  } catch (err) {
+    res.status(500).json({ error: '上传发票文件失败' });
+  }
 });
 
 // ─── 新增：工单系统 ──────────────────────────────────────
 
-router.post('/user/tickets', authUser, (req, res) => {
+router.post('/user/tickets', authUser, async (req, res) => {
   const { subject, content } = req.body;
   if (!subject || !content) return res.status(400).json({ error: '基本信息缺失' });
 
-  // 限制同时在线工单数
-  const openCount = ticketsDB.filter(t => t.userId === req.user.id && t.status !== 'closed').length;
-  if (openCount >= 3) {
-    return res.status(429).json({ error: '您已有 3 个工单处理中，请先耐心等待客服回复或解决旧工单' });
+  try {
+    const { rows } = await db.query('SELECT COUNT(*) FROM tickets WHERE user_id = $1 AND status != $2', [req.user.id, 'closed']);
+    if (parseInt(rows[0].count) >= 3) {
+      return res.status(429).json({ error: '您已有 3 个工单处理中，请先耐心等待客服回复或解决旧工单' });
+    }
+
+    const id = 'tk_' + Date.now();
+    await db.query(
+      'INSERT INTO tickets (id, user_id, subject, content, status, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+      [id, req.user.id, subject, content, 'open', Date.now()]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: '创建工单失败' });
   }
-
-  const ticket = {
-    id: 'tk_' + Date.now(),
-    userId: req.user.id,
-    subject,
-    content,
-    status: 'open',
-    replies: [],
-    createdAt: Date.now()
-  };
-  ticketsDB.push(ticket);
-  saveTickets();
-  res.json({ success: true, ticket });
 });
 
-router.get('/user/tickets', authUser, (req, res) => {
-  const list = ticketsDB.filter(t => t.userId === req.user.id).sort((a,b) => b.createdAt - a.createdAt);
-  res.json({ tickets: list });
+router.get('/user/tickets', authUser, async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM tickets WHERE user_id = $1 ORDER BY created_at DESC', [req.user.id]);
+    res.json({ tickets: rows });
+  } catch (err) {
+    res.status(500).json({ error: '获取工单列表失败' });
+  }
 });
 
-router.post('/user/tickets/:id/reply', authUser, upload.single('attachment'), (req, res) => {
+router.post('/user/tickets/:id/reply', authUser, upload.single('attachment'), async (req, res) => {
   const { id } = req.params;
   const { content } = req.body;
-  const ticket = ticketsDB.find(t => t.id === id && t.userId === req.user.id);
-  if (!ticket) return res.status(404).json({ error: '工单未找到' });
+  
+  try {
+    const { rows } = await db.query('SELECT replies FROM tickets WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: '工单未找到' });
 
-  const reply = { role: 'user', content, createdAt: Date.now() };
-  if (req.file) {
-    reply.attachment = `/uploads/tickets/${req.file.filename}`;
+    const reply = { role: 'user', content, createdAt: Date.now() };
+    if (req.file) reply.attachment = `/uploads/tickets/${req.file.filename}`;
+
+    const newReplies = [...(rows[0].replies || []), reply];
+    await db.query('UPDATE tickets SET replies = $1, status = $2 WHERE id = $3', [JSON.stringify(newReplies), 'open', id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: '回复工单失败' });
   }
-
-  ticket.replies.push(reply);
-  ticket.status = 'open'; // 重置为 open 待处理
-  saveTickets();
-  res.json({ success: true });
 });
 
-router.get('/admin/tickets', authAdmin('Operator'), (req, res) => {
-  res.json({ tickets: ticketsDB.slice().sort((a,b) => b.createdAt - a.createdAt) });
+router.get('/admin/tickets', authAdmin('Operator'), async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM tickets ORDER BY created_at DESC');
+    res.json({ tickets: rows });
+  } catch (err) {
+    res.status(500).json({ error: '读取工单库失败' });
+  }
 });
 
-router.post('/user/tickets/:id/close', authUser, (req, res) => {
+router.post('/user/tickets/:id/close', authUser, async (req, res) => {
   const { id } = req.params;
-  const ticket = ticketsDB.find(t => t.id === id && t.userId === req.user.id);
-  if (!ticket) return res.status(404).json({ error: '工单未找到' });
-
-  ticket.status = 'closed';
-  saveTickets();
-  res.json({ success: true });
+  try {
+    await db.query('UPDATE tickets SET status = $1 WHERE id = $2 AND user_id = $3', ['closed', id, req.user.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: '关闭工单失败' });
+  }
 });
 
-router.post('/admin/tickets/:id/reply', authAdmin('Operator'), upload.single('attachment'), (req, res) => {
+router.post('/admin/tickets/:id/reply', authAdmin('Operator'), upload.single('attachment'), async (req, res) => {
   const { id } = req.params;
   const { content, status } = req.body;
-  const ticket = ticketsDB.find(t => t.id === id);
-  if (!ticket) return res.status(404).json({ error: '工单未找到' });
 
-  const reply = { 
-    role: 'admin', 
-    content, 
-    adminId: req.admin.id, 
-    createdAt: Date.now() 
-  };
-  
-  if (req.file) {
-    reply.attachment = `/uploads/tickets/${req.file.filename}`;
+  try {
+    const { rows } = await db.query('SELECT replies FROM tickets WHERE id = $1', [id]);
+    if (rows.length === 0) return res.status(404).json({ error: '工单未找到' });
+
+    const reply = { role: 'admin', content, adminId: req.admin.id, createdAt: Date.now() };
+    if (req.file) reply.attachment = `/uploads/tickets/${req.file.filename}`;
+
+    const newReplies = [...(rows[0].replies || []), reply];
+    const finalStatus = status || 'replied';
+
+    await db.query('UPDATE tickets SET replies = $1, status = $2 WHERE id = $3', [JSON.stringify(newReplies), finalStatus, id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: '管理员回复失败' });
   }
-
-  ticket.replies.push(reply);
-  if (status) ticket.status = status;
-  else ticket.status = 'replied'; // 默认标记为已回复
-  
-  saveTickets();
-  res.json({ success: true });
 });
 
 // 导出路由和中间件供其他路由使用
-module.exports = { router, authUser, authAdmin, usersDB, creditsLedger, saveUsers, saveLedger, saveOrders, saveInvoices, saveTickets };
+module.exports = { router, authUser, authAdmin };
