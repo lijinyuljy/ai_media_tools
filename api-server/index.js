@@ -147,7 +147,6 @@ app.post('/api/tasks/prompt', upload.single('image'), async (req, res) => {
           }
         }
     });
-});
   } catch (err) {
     res.status(500).json({ error: 'Failed to process prompt extraction' });
   }
