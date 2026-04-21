@@ -30,7 +30,7 @@ RUN pip3 install --no-cache-dir paddlepaddle-gpu==2.6.2 -i https://pypi.tuna.tsi
 RUN pip3 install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu118
 
 # 安装 Web 服务基础库及 OSS SDK
-RUN pip3 install --no-cache-dir flask requests gunicorn aliyun-oss2
+RUN pip3 install --no-cache-dir flask requests gunicorn oss2
 
 # 复制 VSR 项目代码及依赖
 COPY vsr_core/requirements.txt ./vsr_requirements.txt
