@@ -5,6 +5,14 @@ const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 
+// 捕捉全局未处理的异常，防止进程“无声死亡”
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL ERROR] 💥 未捕获的异常:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL ERROR] 💥 未处理的 Promise 拒绝:', reason);
+});
+
 // 导入业务服务
 const taskService = require('./services/TaskService');
 
