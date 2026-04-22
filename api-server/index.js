@@ -485,7 +485,7 @@ const adminDistPath = path.join(__dirname, '..', 'admin-web', 'dist');
 if (fs.existsSync(adminDistPath)) {
   app.use('/admin', express.static(adminDistPath));
   // SPA fallback: 所有 /admin/* 非 API 路径都返回 index.html
-  app.get('/admin/*', (req, res) => {
+  app.get('/admin/{*splat}', (req, res) => {
     res.sendFile(path.join(adminDistPath, 'index.html'));
   });
   console.log('[Static] ✅ Admin 前端已挂载: /admin/');
@@ -498,7 +498,7 @@ const cnDistPath = path.join(__dirname, '..', 'cn-web', 'dist');
 if (fs.existsSync(cnDistPath)) {
   app.use(express.static(cnDistPath));
   // SPA fallback: 非 API 且非 admin 的所有路径返回用户端 index.html
-  app.get('*', (req, res, next) => {
+  app.get('{*splat}', (req, res, next) => {
     // 排除 API 路由和 admin 路由
     if (req.path.startsWith('/api/') || req.path.startsWith('/admin') || req.path.startsWith('/uploads')) {
       return next();
