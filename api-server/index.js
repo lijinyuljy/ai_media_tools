@@ -479,6 +479,37 @@ app._runVlmPromptLogic = async (taskId, file) => {
         console.error(`[VLM Error] task ${taskId}:`, err.message);
     }
 };
+// ===== 前端静态文件托管 =====
+// Admin SPA: 挂载在 /admin/ 路径下
+const adminDistPath = path.join(__dirname, '..', 'admin-web', 'dist');
+if (fs.existsSync(adminDistPath)) {
+  app.use('/admin', express.static(adminDistPath));
+  // SPA fallback: 所有 /admin/* 非 API 路径都返回 index.html
+  app.get('/admin/*', (req, res) => {
+    res.sendFile(path.join(adminDistPath, 'index.html'));
+  });
+  console.log('[Static] ✅ Admin 前端已挂载: /admin/');
+} else {
+  console.warn('[Static] ⚠️ admin-web/dist 不存在，请先执行 npm run build');
+}
+
+// CN (用户端) SPA: 挂载在根路径 /
+const cnDistPath = path.join(__dirname, '..', 'cn-web', 'dist');
+if (fs.existsSync(cnDistPath)) {
+  app.use(express.static(cnDistPath));
+  // SPA fallback: 非 API 且非 admin 的所有路径返回用户端 index.html
+  app.get('*', (req, res, next) => {
+    // 排除 API 路由和 admin 路由
+    if (req.path.startsWith('/api/') || req.path.startsWith('/admin') || req.path.startsWith('/uploads')) {
+      return next();
+    }
+    res.sendFile(path.join(cnDistPath, 'index.html'));
+  });
+  console.log('[Static] ✅ 用户端前端已挂载: /');
+} else {
+  console.warn('[Static] ⚠️ cn-web/dist 不存在，请先执行 npm run build');
+}
+
 // Listen on port
 app.listen(port, () => {
   console.log(`[CN API] Server running on http://localhost:${port}`);
@@ -486,3 +517,4 @@ app.listen(port, () => {
 
 // 强行保持 Node.js 事件循环活跃，防止在某些 WebShell 容器下因缺少常规 handle 而自动退出
 process.stdin.resume();
+

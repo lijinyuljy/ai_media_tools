@@ -23,7 +23,7 @@ const AuthModal = ({ onClose, onSuccess }: AuthModalProps) => {
 
   // 微信登录状态
   const [wechatQr, setWechatQr] = useState('');
-  const [sceneId, setSceneId] = useState('');
+  const [_sceneId, setSceneId] = useState('');
   const pollTimer = useRef<any>(null);
 
   // 处理邮箱注册登录
@@ -34,7 +34,7 @@ const AuthModal = ({ onClose, onSuccess }: AuthModalProps) => {
     const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
     const payload = isLogin ? { email, password } : { email, password, nickname };
     try {
-      const res = await fetch(`http://localhost:3000${endpoint}`, {
+      const res = await fetch(`${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -54,7 +54,7 @@ const AuthModal = ({ onClose, onSuccess }: AuthModalProps) => {
     if (!/^1[3-9]\d{9}$/.test(phone)) return setError('请输入正确的手机号');
     setLoading(true);
     try {
-      await fetch('http://localhost:3000/api/auth/sms/send', {
+      await fetch('/api/auth/sms/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone })
@@ -79,7 +79,7 @@ const AuthModal = ({ onClose, onSuccess }: AuthModalProps) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:3000/api/auth/sms/login', {
+      const res = await fetch('/api/auth/sms/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, code: smsCode })
@@ -97,7 +97,7 @@ const AuthModal = ({ onClose, onSuccess }: AuthModalProps) => {
   // 微信扫码逻辑
   const startWechatAuth = async () => {
     try {
-      const res = await fetch('http://localhost:3000/api/auth/wechat/qrcode');
+      const res = await fetch('/api/auth/wechat/qrcode');
       const data = await res.json();
       setWechatQr(data.qrUrl);
       setSceneId(data.sceneId);
@@ -105,7 +105,7 @@ const AuthModal = ({ onClose, onSuccess }: AuthModalProps) => {
       // 开始轮询
       if (pollTimer.current) clearInterval(pollTimer.current);
       pollTimer.current = setInterval(async () => {
-        const checkRes = await fetch(`http://localhost:3000/api/auth/wechat/check?sceneId=${data.sceneId}`);
+        const checkRes = await fetch(`/api/auth/wechat/check?sceneId=${data.sceneId}`);
         const checkData = await checkRes.json();
         if (checkData.status === 'success') {
           clearInterval(pollTimer.current);

@@ -55,7 +55,7 @@ export default function PromptUploader({ token }: { token: string | null }) {
     });
 
     try {
-        const res = await fetch('http://localhost:3000/api/tasks/prompt/batch', {
+        const res = await fetch('/api/tasks/prompt/batch', {
              method: 'POST',
              headers: { 'Authorization': `Bearer ${token}` },
              body: formData

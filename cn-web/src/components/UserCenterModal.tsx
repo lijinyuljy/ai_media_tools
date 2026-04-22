@@ -10,7 +10,7 @@ const UserCenterModal = ({ onClose, token }: UserCenterModalProps) => {
   const [orders, setOrders] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [tickets, setTickets] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [_loading, setLoading] = useState(false);
   const [showApplyInvoice, setShowApplyInvoice] = useState<string | null>(null); // orderId
 
   // 发票表单
@@ -28,9 +28,9 @@ const UserCenterModal = ({ onClose, token }: UserCenterModalProps) => {
     try {
       const headers = { 'Authorization': `Bearer ${token}` };
       const [ordRes, invRes, tikRes] = await Promise.all([
-        fetch('http://localhost:3000/api/user/orders', { headers }),
-        fetch('http://localhost:3000/api/user/invoices', { headers }),
-        fetch('http://localhost:3000/api/user/tickets', { headers })
+        fetch('/api/user/orders', { headers }),
+        fetch('/api/user/invoices', { headers }),
+        fetch('/api/user/tickets', { headers })
       ]);
       const [ordData, invData, tikData] = await Promise.all([ordRes.json(), invRes.json(), tikRes.json()]);
       setOrders(ordData.orders || []);
@@ -46,7 +46,7 @@ const UserCenterModal = ({ onClose, token }: UserCenterModalProps) => {
     e.preventDefault();
     if (!token || !showApplyInvoice) return;
     try {
-      const res = await fetch('http://localhost:3000/api/user/invoices', {
+      const res = await fetch('/api/user/invoices', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ orderId: showApplyInvoice, ...invoiceForm })
@@ -66,7 +66,7 @@ const UserCenterModal = ({ onClose, token }: UserCenterModalProps) => {
     e.preventDefault();
     if (!token || !ticketForm.subject || !ticketForm.content) return;
     try {
-      const res = await fetch('http://localhost:3000/api/user/tickets', {
+      const res = await fetch('/api/user/tickets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(ticketForm)
@@ -85,7 +85,7 @@ const UserCenterModal = ({ onClose, token }: UserCenterModalProps) => {
   const handleCloseTicket = async (id: string) => {
     if(!confirm('确认该问题已解决并关闭工单吗？')) return;
     try {
-        const res = await fetch(`http://localhost:3000/api/user/tickets/${id}/close`, {
+        const res = await fetch(`/api/user/tickets/${id}/close`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -104,7 +104,7 @@ const UserCenterModal = ({ onClose, token }: UserCenterModalProps) => {
     if (fileInput?.files?.[0]) formData.append('attachment', fileInput.files[0]);
 
     try {
-      const res = await fetch(`http://localhost:3000/api/user/tickets/${id}/reply?type=tickets`, {
+      const res = await fetch(`/api/user/tickets/${id}/reply?type=tickets`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
         body: formData
@@ -216,7 +216,7 @@ const UserCenterModal = ({ onClose, token }: UserCenterModalProps) => {
                     </div>
                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                         {i.fileUrl && (
-                           <a href={`http://localhost:3000${i.fileUrl}`} target="_blank" rel="noreferrer" style={{ fontSize: '0.8rem', color: '#10b981', textDecoration: 'underline' }}>下载原件</a>
+                           <a href={`${i.fileUrl}`} target="_blank" rel="noreferrer" style={{ fontSize: '0.8rem', color: '#10b981', textDecoration: 'underline' }}>下载原件</a>
                         )}
                         <span style={{ 
                           padding: '0.3rem 0.8rem', borderRadius: '4px', fontSize: '0.8rem',
@@ -345,7 +345,7 @@ const UserCenterModal = ({ onClose, token }: UserCenterModalProps) => {
                                       <div style={{ fontSize: '0.9rem', lineHeight: 1.6, color: '#e2e8f0' }}>{r.content}</div>
                                       {r.attachment && (
                                          <div style={{ marginTop: '0.8rem' }}>
-                                            <img src={`http://localhost:3000${r.attachment}`} alt="attachment" style={{ maxWidth: '100%', borderRadius: '4px', cursor: 'pointer', border: '1px solid rgba(255,255,255,0.1)' }} onClick={() => window.open(`http://localhost:3000${r.attachment}`)} />
+                                            <img src={`${r.attachment}`} alt="attachment" style={{ maxWidth: '100%', borderRadius: '4px', cursor: 'pointer', border: '1px solid rgba(255,255,255,0.1)' }} onClick={() => window.open(`${r.attachment}`)} />
                                          </div>
                                       )}
                                    </div>

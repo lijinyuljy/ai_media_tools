@@ -15,7 +15,7 @@ const BillingModal = ({ onClose, onRefresh, token }: BillingModalProps) => {
     if (!token) return;
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:3000/api/billing/recharge', {
+      const res = await fetch('/api/billing/recharge', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -36,7 +36,7 @@ const BillingModal = ({ onClose, onRefresh, token }: BillingModalProps) => {
     // 模拟看广告 3 秒
     setTimeout(async () => {
       try {
-        const res = await fetch('http://localhost:3000/api/billing/watch-ad', {
+        const res = await fetch('/api/billing/watch-ad', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${token}` }
         });

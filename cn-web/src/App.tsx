@@ -6,7 +6,7 @@ import AuthModal from './components/AuthModal';
 import BillingModal from './components/BillingModal';
 import UserCenterModal from './components/UserCenterModal';
 
-const API_BASE = 'http://localhost:3000';
+const API_BASE = '';
 
 declare global {
   interface Window { refreshTasks: any; }

@@ -14,7 +14,7 @@ interface MediaItem {
   maskCoords?: { x: number, y: number, width: number, height: number } | null;
 }
 
-export default function FabricMaskEditor({ token, onMaskExtract }: Props) {
+export default function FabricMaskEditor({ token, onMaskExtract: _onMaskExtract }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -100,7 +100,7 @@ export default function FabricMaskEditor({ token, onMaskExtract }: Props) {
         canvas.renderAll();
       });
 
-      canvas.on('mouse:up', function(o) {
+      canvas.on('mouse:up', function(_o) {
         isDragging = false;
         if (rectRef.current && rectRef.current.width! > 5) {
           updateMaskCoords({
@@ -322,7 +322,7 @@ export default function FabricMaskEditor({ token, onMaskExtract }: Props) {
     });
 
     try {
-        const res = await fetch('http://localhost:3000/api/tasks/watermark/batch', {
+        const res = await fetch('/api/tasks/watermark/batch', {
              method: 'POST',
              headers: { 'Authorization': `Bearer ${token}` },
              body: formData
