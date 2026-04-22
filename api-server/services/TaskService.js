@@ -50,7 +50,7 @@ class TaskService {
         inputUrl: oss.getSignatureUrl(ossPath, 3600), // 提供 1 小时有效的签名图
         type,
         engine,
-        callbackUrl: process.env.API_CALLBACK_URL // FC 处理完后的回调地址
+        callbackUrl: `${process.env.API_CALLBACK_URL}?token=${process.env.WEBHOOK_SECRET}` // 带安全令牌的回调地址
       };
 
       console.log(`[TaskCenter] 触发 FC 函数: ${functionName}`);

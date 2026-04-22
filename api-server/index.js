@@ -177,7 +177,7 @@ app.post('/api/test/watermark', async (req, res) => {
       inputUrl,
       type: 'clean',
       engine: 'vsr',
-      callbackUrl: process.env.API_CALLBACK_URL
+      callbackUrl: `${process.env.API_CALLBACK_URL}?token=${process.env.WEBHOOK_SECRET}`
     };
 
     console.log(`[Test] 正在触发云函数: ${functionName}`);
@@ -273,7 +273,15 @@ app.get('/api/tasks', authUser, async (req, res) => {
  */
 app.post('/api/webhook/fc', async (req, res) => {
   const { taskId, status, resultUrl, error, progress } = req.body;
-  console.log(`[Webhook] 收到 FC 回调: taskId=${taskId}, status=${status}`);
+  const { token } = req.query;
+
+  // 安全校验：令牌不匹配则拒绝处理
+  if (!token || token !== process.env.WEBHOOK_SECRET) {
+    console.warn(`[Webhook] ❌ 非法请求拦截: taskId=${taskId}, 来源IP=${req.ip}`);
+    return res.status(403).json({ error: 'Forbidden: Invalid token' });
+  }
+
+  console.log(`[Webhook] ✅ 收到合法的 FC 回调: taskId=${taskId}, status=${status}`);
   
   try {
     await taskService.updateTask(taskId, {
@@ -475,3 +483,6 @@ app._runVlmPromptLogic = async (taskId, file) => {
 app.listen(port, () => {
   console.log(`[CN API] Server running on http://localhost:${port}`);
 });
+
+// 强行保持 Node.js 事件循环活跃，防止在某些 WebShell 容器下因缺少常规 handle 而自动退出
+process.stdin.resume();
