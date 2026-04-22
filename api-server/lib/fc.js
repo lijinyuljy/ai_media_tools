@@ -48,7 +48,7 @@ class FCService {
       
       const { Readable } = require('stream');
       const invokeRequest = new FC.InvokeFunctionRequest({
-        body: Readable.from(JSON.stringify(payload)),
+        body: Readable.from(Buffer.from(JSON.stringify(payload))),
       });
 
       const result = await this.client.invokeFunction(functionName, invokeRequest, invokeHeaders);
