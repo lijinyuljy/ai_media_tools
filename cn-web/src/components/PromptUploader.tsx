@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { API_BASE } from '../apiConfig';
 
 interface MediaItem {
   id: string;
@@ -55,7 +56,7 @@ export default function PromptUploader({ token }: { token: string | null }) {
     });
 
     try {
-        const res = await fetch('/api/tasks/prompt/batch', {
+        const res = await fetch(`${API_BASE}/api/tasks/prompt/batch`, {
              method: 'POST',
              headers: { 'Authorization': `Bearer ${token}` },
              body: formData

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { API_BASE } from './apiConfig';
 
 interface AdminLoginProps {
   onLogin: (token: string, admin: { username: string; role: string }) => void;
@@ -15,7 +16,7 @@ const AdminLogin = ({ onLogin }: AdminLoginProps) => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/admin/auth/login', {
+      const res = await fetch(`${API_BASE}/api/admin/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })

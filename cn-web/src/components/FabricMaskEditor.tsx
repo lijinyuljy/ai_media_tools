@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { API_BASE } from '../apiConfig';
 import { fabric } from 'fabric';
 
 interface Props {
@@ -322,7 +323,7 @@ export default function FabricMaskEditor({ token, onMaskExtract: _onMaskExtract 
     });
 
     try {
-        const res = await fetch('/api/tasks/watermark/batch', {
+        const res = await fetch(`${API_BASE}/api/tasks/watermark/batch`, {
              method: 'POST',
              headers: { 'Authorization': `Bearer ${token}` },
              body: formData

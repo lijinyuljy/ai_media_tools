@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import AdminLogin from './AdminLogin';
+import { API_BASE } from './apiConfig';
 
 // 定义模型供应商类型
 interface ModelProvider {
@@ -97,9 +98,9 @@ const AdminDashboard = () => {
     const headers = { 'Authorization': `Bearer ${token}` };
     try {
       const [ordRes, invRes, tikRes] = await Promise.all([
-        fetch('/api/admin/orders', { headers }),
-        fetch('/api/admin/invoices', { headers }),
-        fetch('/api/admin/tickets', { headers })
+        fetch(`${API_BASE}/api/admin/orders`, { headers }),
+        fetch(`${API_BASE}/api/admin/invoices`, { headers }),
+        fetch(`${API_BASE}/api/admin/tickets`, { headers })
       ]);
       const [ordData, invData, tikData] = await Promise.all([ordRes.json(), invRes.json(), tikRes.json()]);
       const rawOrders = ordData.orders || [];
@@ -110,9 +111,9 @@ const AdminDashboard = () => {
   };
 
   useEffect(() => {
-    fetch('/api/admin/vlm-prompt').then(r => r.json()).then(d => setSystemPrompt(d.prompt || '')).catch(() => { });
-    fetch('/api/admin/model-library').then(r => r.json()).then(d => { if (d.modelLibrary) setModelLibrary(d.modelLibrary); }).catch(() => { });
-    fetch('/api/admin/feature-routing').then(r => r.json()).then(d => { if (d.featureRouting) setFeatureMappings(d.featureRouting); }).catch(() => { });
+    fetch(`${API_BASE}/api/admin/vlm-prompt`).then(r => r.json()).then(d => setSystemPrompt(d.prompt || '')).catch(() => { });
+    fetch(`${API_BASE}/api/admin/model-library`).then(r => r.json()).then(d => { if (d.modelLibrary) setModelLibrary(d.modelLibrary); }).catch(() => { });
+    fetch(`${API_BASE}/api/admin/feature-routing`).then(r => r.json()).then(d => { if (d.featureRouting) setFeatureMappings(d.featureRouting); }).catch(() => { });
     fetchBusinessData();
     const busInterval = setInterval(fetchBusinessData, 5000);
     return () => clearInterval(busInterval);
@@ -145,7 +146,7 @@ const AdminDashboard = () => {
 
   const saveModelLibraryToBackend = async (newLib: ModelProvider[]) => {
     try {
-      await fetch('/api/admin/model-library', {
+      await fetch(`${API_BASE}/api/admin/model-library`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ modelLibrary: newLib })
@@ -383,7 +384,7 @@ const AdminDashboard = () => {
                    <h3 style={{ margin: 0 }}>🎯 功能引擎分发调度表 (Engine Routing)</h3>
                    <button onClick={async () => {
                       try {
-                        await fetch('/api/admin/feature-routing', {
+                        await fetch(`${API_BASE}/api/admin/feature-routing`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ featureRouting: featureMappings })
@@ -419,7 +420,7 @@ const AdminDashboard = () => {
                    <button onClick={async () => {
                       setPromptSaveStatus('Saving...');
                       try {
-                        await fetch('/api/admin/vlm-prompt', {
+                        await fetch(`${API_BASE}/api/admin/vlm-prompt`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ prompt: systemPrompt })
@@ -579,7 +580,7 @@ const AdminDashboard = () => {
                     
                     {i.fileUrl ? (
                       <div style={{ marginTop: '1.5rem', padding: '0.8rem', background: 'rgba(16,185,129,0.08)', color: '#10b981', borderRadius: '10px', textAlign: 'center', fontSize: '0.9rem', border: '1px solid rgba(16,185,129,0.2)' }}>
-                        已送达: <a href={`${i.fileUrl}`} target="_blank" rel="noreferrer" style={{ color: '#10b981', fontWeight: 700 }}>预览凭证</a>
+                        已送达: <a href={`${API_BASE}${i.fileUrl}`} target="_blank" rel="noreferrer" style={{ color: '#10b981', fontWeight: 700 }}>预览凭证</a>
                       </div>
                     ) : (
                       <div style={{ marginTop: '1.5rem' }}>
@@ -589,7 +590,7 @@ const AdminDashboard = () => {
                                const file = e.target.files?.[0]; if(!file) return;
                                const formData = new FormData(); formData.append('invoice', file);
                                const token = localStorage.getItem('admin_token');
-                               await fetch(`/api/admin/invoices/${i.id}/upload`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` }, body: formData });
+                               await fetch(`${API_BASE}/api/admin/invoices/${i.id}/upload`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` }, body: formData });
                                fetchBusinessData();
                             }} />
                          </label>
@@ -658,7 +659,7 @@ const AdminDashboard = () => {
                                       if (replyFile) formData.append('attachment', replyFile);
 
                                       try {
-                                        const res = await fetch(`/api/admin/tickets/${selectedTicket.id}/reply?type=tickets`, { 
+                                        const res = await fetch(`${API_BASE}/api/admin/tickets/${selectedTicket.id}/reply?type=tickets`, { 
                                           method:'POST', 
                                           headers:{'Authorization':`Bearer ${token}`}, 
                                           body: formData
