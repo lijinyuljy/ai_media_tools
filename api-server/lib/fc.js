@@ -48,17 +48,25 @@ class FCService {
     // 如果配置了 HTTP Trigger URL，优先使用 Axios 直接调用
     if (this.httpTriggerUrl) {
       try {
-        const response = await axios.post(this.httpTriggerUrl, payload, {
+        // 自动补全 /invoke 路径，防止用户直接从中控台复制的 URL 忘记加后缀导致 404
+        let targetUrl = this.httpTriggerUrl.trim();
+        if (!targetUrl.endsWith('/invoke')) {
+          targetUrl = targetUrl.replace(/\/$/, '') + '/invoke';
+        }
+
+        const response = await axios.post(targetUrl, payload, {
           headers: { 'Content-Type': 'application/json' },
           timeout: 60000
         });
         return {
-          requestId: response.headers['x-fc-request-id'],
+          requestId: response.headers['x-fc-request-id'] || 'http-trigger-' + Date.now(),
           status: response.status
         };
       } catch (e) {
-        console.error(`[FC] HTTP Trigger 调用失败:`, e.message);
-        throw e;
+        // 提取更为详细的 Axios 报错信息
+        const errorMsg = e.response ? `Status: ${e.response.status}, Data: ${JSON.stringify(e.response.data)}` : e.message;
+        console.error(`[FC] HTTP Trigger 调用失败:`, errorMsg);
+        throw new Error(`HTTP Trigger 调用失败: ${errorMsg}`);
       }
     }
 
