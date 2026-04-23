@@ -55,7 +55,7 @@ class TaskService {
       };
 
       console.log(`[TaskCenter] 触发 FC 函数: ${functionName}`);
-      await fc.invokeAsync(functionName, payload);
+      await fc.dispatchToFC(taskId, payload.inputUrl);
       
       await this.updateTask(taskId, { 
         status: 'processing', 
