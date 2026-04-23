@@ -252,7 +252,14 @@ function App() {
                       {/* 文本渲染区 */}
                       <div style={{ background: 'rgba(0,0,0,0.4)', padding: '0.8rem', borderRadius: '6px', border: '1px dashed var(--border-color)', marginBottom: '1rem', flex: 1, minHeight: '80px', maxHeight: '120px', overflowY: 'auto' }}>
                          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5, wordBreak: 'break-word' }}>
-                            {task.result_text}
+                            {(() => {
+                               try {
+                                   const parsed = JSON.parse(task.result_text);
+                                   return parsed.prompt || task.result_text;
+                               } catch (e) {
+                                   return task.result_text;
+                               }
+                            })()}
                          </p>
                       </div>
 
@@ -260,7 +267,12 @@ function App() {
                       <div style={{ display: 'flex', gap: '0.5rem', marginTop: 'auto' }}>
                         <button 
                            onClick={() => {
-                              navigator.clipboard.writeText(task.result_text);
+                              try {
+                                  const parsed = JSON.parse(task.result_text);
+                                  navigator.clipboard.writeText(parsed.prompt || task.result_text);
+                              } catch (e) {
+                                  navigator.clipboard.writeText(task.result_text);
+                              }
                               showToast('✅ 提示词已成功复制到剪贴板！');
                            }}
                            style={{ flex: 1, background: 'var(--btn-gradient)', color: 'white', border: 'none', padding: '0.6rem', borderRadius: '6px', cursor: 'pointer', fontSize:'0.85rem' }}>

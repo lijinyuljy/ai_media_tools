@@ -25,8 +25,8 @@ class FCService {
         accessKeyId: ALIBABA_CLOUD_ACCESS_KEY_ID,
         accessKeySecret: ALIBABA_CLOUD_ACCESS_KEY_SECRET,
         endpoint: FC_ENDPOINT,
-        readTimeout: 10000,    // 增加读超时
-        connectTimeout: 5000,   // 增加连接超时
+        readTimeout: 60000,    // 大幅增加读超时至 60 秒
+        connectTimeout: 10000,   // 增加连接超时至 10 秒
       });
       this.client = new FC.default(config);
       console.log(`[FC] 已初始化: endpoint=${FC_ENDPOINT}`);
