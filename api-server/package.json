@@ -13,6 +13,7 @@
   "dependencies": {
     "@alicloud/fc20230330": "^4.7.3",
     "@alicloud/openapi-client": "^0.4.15",
+    "@alicloud/openapi-util": "^0.2.1",
     "@alicloud/tea-util": "^1.4.11",
     "ali-oss": "^6.23.0",
     "bcryptjs": "^3.0.3",
