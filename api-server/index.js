@@ -111,10 +111,31 @@ console.log(`[VLM] 当前配置: baseUrl=${vlmConfig.baseUrl}, model=${vlmConfig
 const app = express();
 const port = process.env.PORT || 3000;
 
+// 1. 本地上传文件目录：使用绝对路径挂载以确保稳定性
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// 2. 数据库自动补全/同步逻辑
+async function ensureDbInSync() {
+  try {
+    const db = require('./lib/db');
+    console.log('[DB] 正在同步表结构...');
+    await db.query(`
+      ALTER TABLE tasks ADD COLUMN IF NOT EXISTS original_url TEXT;
+      ALTER TABLE tasks ADD COLUMN IF NOT EXISTS result_url TEXT;
+      ALTER TABLE tasks ADD COLUMN IF NOT EXISTS result_text TEXT;
+      ALTER TABLE tasks ADD COLUMN IF NOT EXISTS engine TEXT;
+    `);
+    console.log('[DB] ✅ 数据库表结构同步完成');
+  } catch (err) {
+    console.error('[DB] ❌ 自动同步失败 (忽略或手动执行):', err.message);
+  }
+}
+ensureDbInSync();
+
 // Config Middleware
 app.use(cors());
-app.use(express.json());
-app.use('/uploads', express.static('uploads'));
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
 const { router: authRouter, authUser } = require('./routes/auth');
 app.use('/api', authRouter);
@@ -492,9 +513,6 @@ app._runVlmPromptLogic = async (taskId, file) => {
         console.error(`[VLM Error] task ${taskId}:`, err.message);
     }
 };
-// 挂载本地上传文件目录 (非常重要! 否则预览图会404)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
 // 前端静态文件托管 (保持在最后)
 // Admin SPA: 挂载在 /admin/ 路径下
 const adminDistPath = path.join(__dirname, '..', 'admin-web', 'dist');
@@ -531,36 +549,11 @@ if (fs.existsSync(cnDistPath)) {
   console.warn('[Static] ⚠️ cn-web/dist 不存在，请先执行 npm run build');
 }
 
-// 数据库初始化与表结构校验
-async function initDB() {
-  try {
-    console.log('[DB] 正在校验表结构...');
-    // 检查并添加 original_url 字段
-    await db.query(`
-      DO $$ 
-      BEGIN 
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='tasks' AND column_name='original_url') THEN
-          ALTER TABLE tasks ADD COLUMN original_url TEXT;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='tasks' AND column_name='result_text') THEN
-          ALTER TABLE tasks ADD COLUMN result_text TEXT;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='tasks' AND column_name='result_url') THEN
-          ALTER TABLE tasks ADD COLUMN result_url TEXT;
-        END IF;
-      END $$;
-    `);
-    console.log('[DB] ✅ 表结构校验完成');
-  } catch (err) {
-    console.error('[DB] ❌ 表结构校验失败:', err.message);
-  }
-}
-
-// 启动服务器
-app.listen(3000, async () => {
-  await initDB();
-  console.log(`[CN API] Server running on http://localhost:3000`);
+// Listen on port
+app.listen(port, () => {
+  console.log(`[CN API] Server running on http://localhost:${port}`);
 });
 
 // 强行保持 Node.js 事件循环活跃，防止在某些 WebShell 容器下因缺少常规 handle 而自动退出
 process.stdin.resume();
+
