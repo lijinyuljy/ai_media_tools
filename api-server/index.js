@@ -414,9 +414,10 @@ app.post('/api/tasks/prompt/batch', authUser, upload.any(), async (req, res) => 
           const taskId = `task_${Date.now()}_p${index}`;
           const decodedName = Buffer.from(file.originalname, 'latin1').toString('utf8');
 
+          const originalUrl = `/uploads/${file.filename}`;
           await db.query(
-            'INSERT INTO tasks (task_id, user_id, file_name, type, status, progress, cost, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-            [taskId, userId, decodedName, 'prompt', 'queuing', 0, perTaskCost, Date.now()]
+            'INSERT INTO tasks (task_id, user_id, file_name, original_url, type, status, progress, cost, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+            [taskId, userId, decodedName, originalUrl, 'prompt', 'queuing', 0, perTaskCost, Date.now()]
           );
           
           createdTasks.push({ taskId, status: 'queuing' });
@@ -491,7 +492,10 @@ app._runVlmPromptLogic = async (taskId, file) => {
         console.error(`[VLM Error] task ${taskId}:`, err.message);
     }
 };
-// ===== 前端静态文件托管 =====
+// 挂载本地上传文件目录 (非常重要! 否则预览图会404)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// 前端静态文件托管 (保持在最后)
 // Admin SPA: 挂载在 /admin/ 路径下
 const adminDistPath = path.join(__dirname, '..', 'admin-web', 'dist');
 if (fs.existsSync(adminDistPath)) {

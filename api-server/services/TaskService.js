@@ -16,9 +16,10 @@ class TaskService {
 
     // 1. 本地记录任务初始状态
     try {
+      const originalUrl = `/uploads/${file.filename}`;
       await db.query(
-        'INSERT INTO tasks (task_id, user_id, file_name, type, engine, status, progress, cost, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-        [taskId, userId, file.originalname, type, engine, 'uploading', 5, cost, Date.now()]
+        'INSERT INTO tasks (task_id, user_id, file_name, original_url, type, engine, status, progress, cost, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+        [taskId, userId, file.originalname, originalUrl, type, engine, 'uploading', 5, cost, Date.now()]
       );
     } catch (err) {
       console.error('[TaskCenter] 初始任务记录失败:', err.message);
