@@ -302,7 +302,7 @@ function App() {
                            <span style={{ fontSize: '2rem', animation: task.status === 'processing' ? 'fadeIn 1s infinite alternate' : 'none' }}>
                               {task.type === 'video' ? '🎬' : '🖼️'}
                            </span>
-                           <span>{task.status === 'queuing' ? '⏳ 队列排队中' : '⚡ 算力执行中'}</span>
+                           <span>{task.status === 'queuing' ? '⏳ 队列排队中' : task.status === 'failed' ? '❌ 失败回退' : '⚡ 算力执行中'}</span>
                         </div>
                      )}
                      {task.status === 'processing' && (
