@@ -55,12 +55,16 @@ class TaskService {
       };
 
       console.log(`[TaskCenter] 触发 FC 函数: ${functionName}`);
-      await fc.dispatchToFC(taskId, payload.inputUrl);
+      const dispatchSuccess = await fc.dispatchToFC(taskId, payload.inputUrl);
       
-      await this.updateTask(taskId, { 
-        status: 'processing', 
-        progress: 30
-      });
+      if (dispatchSuccess) {
+        await this.updateTask(taskId, { 
+          status: 'processing', 
+          progress: 30
+        });
+      } else {
+        console.warn(`[TaskCenter] FC 调度失败，终止后续处理状态写入: ${taskId}`);
+      }
 
     } catch (err) {
       console.error(`[TaskCenter] 任务 ${taskId} 调度失败:`, err.message);
