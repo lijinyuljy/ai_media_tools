@@ -281,8 +281,8 @@ function App() {
                            style={{ flex: 1, background: 'var(--btn-gradient)', color: 'white', border: 'none', padding: '0.6rem', borderRadius: '6px', cursor: 'pointer', fontSize:'0.85rem' }}>
                            📄 一键复制指令
                         </button>
-                        <a href={`${API_BASE}${task.result_url}`} download target="_blank" rel="noreferrer" style={{ flex: 1, background: '#10b981', color: 'white', textDecoration: 'none', textAlign: 'center', padding: '0.6rem', borderRadius: '6px', cursor: 'pointer', fontSize:'0.85rem' }}>
-                           📦 下载结果
+                        <a href={`${API_BASE}${task.originalUrl}`} download target="_blank" rel="noreferrer" style={{ flex: 1, background: 'rgba(255,255,255,0.1)', color: 'white', textDecoration: 'none', textAlign: 'center', padding: '0.6rem', borderRadius: '6px', cursor: 'pointer', fontSize:'0.85rem' }}>
+                           🖼️ 下载原图
                         </a>
                       </div>
                    </div>
