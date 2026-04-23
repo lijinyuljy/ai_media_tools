@@ -1,6 +1,7 @@
 const FC = require('@alicloud/fc20230330');
 const OpenApi = require('@alicloud/openapi-client');
 const TeaUtil = require('@alicloud/tea-util');
+const axios = require('axios');
 
 class FCService {
   constructor() {
@@ -12,8 +13,11 @@ class FCService {
     const { 
       ALIBABA_CLOUD_ACCESS_KEY_ID, 
       ALIBABA_CLOUD_ACCESS_KEY_SECRET,
-      FC_ENDPOINT // 例如: 12345.cn-hangzhou.fc.aliyuncs.com
+      FC_ENDPOINT,
+      FC_HTTP_TRIGGER_URL
     } = process.env;
+
+    this.httpTriggerUrl = FC_HTTP_TRIGGER_URL;
 
     if (!ALIBABA_CLOUD_ACCESS_KEY_ID || !FC_ENDPOINT) {
       console.warn('[FC] ⚠️ 缺少阿里云凭证或 Endpoint (FC_ENDPOINT)，FC 功能将受限');
@@ -41,6 +45,23 @@ class FCService {
    * @param {object} payload 传递给函数的 JSON 数据
    */
   async invokeAsync(functionName, payload) {
+    // 如果配置了 HTTP Trigger URL，优先使用 Axios 直接调用
+    if (this.httpTriggerUrl) {
+      try {
+        const response = await axios.post(this.httpTriggerUrl, payload, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 60000
+        });
+        return {
+          requestId: response.headers['x-fc-request-id'],
+          status: response.status
+        };
+      } catch (e) {
+        console.error(`[FC] HTTP Trigger 调用失败:`, e.message);
+        throw e;
+      }
+    }
+
     if (!this.client) throw new Error('FC 客户端未初始化');
     
     try {
