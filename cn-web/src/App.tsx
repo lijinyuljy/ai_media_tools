@@ -208,7 +208,13 @@ function App() {
                       {/* 上半部：原图缩略带放大入口 */}
                       <div style={{ width: '100%', height: '120px', background: '#1e293b', borderRadius: '8px', marginBottom: '1rem', backgroundImage: task.originalUrl ? `url(${API_BASE}${task.originalUrl})` : 'none', backgroundSize: 'cover', backgroundPosition: 'center', position: 'relative', overflow: 'hidden' }}>
                          {/* 底部暗角色渐变加深层，确保白色文字/按钮不论在什么图片上都高度清晰 */}
-                         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '50%', background: 'linear-                          {task.originalUrl && (
+                         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '50%', background: 'linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 100%)', pointerEvents: 'none' }}></div>
+                         
+                         <div style={{ position: 'absolute', bottom: '0.5rem', left: '0.6rem', fontSize: '0.7rem', color: 'rgba(255,255,255,0.8)', textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}>
+                            🔖 分析信源
+                         </div>
+
+                         {task.originalUrl && (
                             <a href={`${API_BASE}${task.originalUrl}`} target="_blank" rel="noreferrer" 
                                style={{ 
                                    position: 'absolute', 
@@ -229,12 +235,6 @@ function App() {
                                    gap: '0.3rem',
                                    transition: 'background 0.2s ease'
                                }}
-                               onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.3)'}
-                               onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.15)'}
-                            >
-                               🔍 展开原图
-                            </a>
-                         )}                             }}
                                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.3)'}
                                onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.15)'}
                             >
