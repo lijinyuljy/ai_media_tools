@@ -244,9 +244,12 @@ function App() {
                       </div>
 
                       {/* 标题栏 */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                         <span style={{ fontWeight: 600, fontSize: '0.9rem', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.fileName}</span>
-                         <span style={{ color: '#10b981', fontSize: '0.75rem', border: '1px solid #10b981', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>完成</span>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.8rem' }}>
+                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                            <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)' }}>图片反推提示词</span>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.fileName}</span>
+                         </div>
+                         <span style={{ color: '#10b981', fontSize: '0.75rem', border: '1px solid #10b981', padding: '0.15rem 0.5rem', borderRadius: '4px', alignSelf: 'flex-start' }}>完成</span>
                       </div>
 
                       {/* 文本渲染区 */}
@@ -307,16 +310,21 @@ function App() {
                      )}
                   </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                    <span style={{ fontWeight: 600, fontSize: '0.9rem', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {task.fileName}
-                    </span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.8rem' }}>
+                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                           {task.type === 'video' ? '视频无损去水印' : '图片无损去水印'}
+                        </span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.fileName}</span>
+                     </div>
                     {task.status === 'completed' ? (
-                      <span style={{ color: '#10b981', fontSize: '0.75rem', border: '1px solid #10b981', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>完成</span>
+                      <span style={{ color: '#10b981', fontSize: '0.75rem', border: '1px solid #10b981', padding: '0.15rem 0.5rem', borderRadius: '4px', alignSelf: 'flex-start' }}>完成</span>
                     ) : task.status === 'processing' ? (
-                      <span style={{ color: 'var(--accent-primary)', fontSize: '0.75rem', fontWeight: 'bold' }}>ETA: {Math.max(0, Math.floor(task.eta_seconds * (1 - task.progress/100)))}s</span>
+                      <span style={{ color: 'var(--accent-primary)', fontSize: '0.75rem', fontWeight: 'bold', alignSelf: 'flex-start' }}>ETA: {Math.max(0, Math.floor(task.eta_seconds * (1 - task.progress/100)))}s</span>
+                    ) : task.status === 'failed' ? (
+                      <span style={{ color: '#ef4444', fontSize: '0.75rem', border: '1px solid #ef4444', padding: '0.15rem 0.5rem', borderRadius: '4px', alignSelf: 'flex-start' }}>失败回退</span>
                     ) : (
-                      <span style={{ color: '#ec4899', fontSize: '0.75rem' }}>等待分发</span>
+                      <span style={{ color: '#ec4899', fontSize: '0.75rem', alignSelf: 'flex-start' }}>等待分发</span>
                     )}
                   </div>
 

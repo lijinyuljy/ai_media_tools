@@ -150,6 +150,18 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
+// 安全地绕过 Nginx 正则拦截的方法：使用带参数查询的媒体接口
+app.get('/api/media', (req, res) => {
+  const filePath = req.query.path;
+  if (!filePath || filePath.includes('..')) return res.status(403).send('Forbidden');
+  const absolutePath = path.join(__dirname, filePath);
+  if (fs.existsSync(absolutePath)) {
+    res.sendFile(absolutePath);
+  } else {
+    res.status(404).send('Not Found');
+  }
+});
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', version: '1.0.0', region: 'cn' });
 });
@@ -277,23 +289,63 @@ app.get('/api/admin/vlm-config', (req, res) => {
 });
 
 app.get('/api/tasks', authUser, async (req, res) => {
+  const client = await db.getClient();
   try {
-    const { rows } = await db.query(
+    const { rows } = await client.query(
       'SELECT * FROM tasks WHERE user_id = $1 ORDER BY created_at DESC', 
       [req.user.id]
     );
-    // 兼容性处理：确保前端能拿到 camelCase 字段 (如果前端代码没改完的话)
-    const normalizedTasks = rows.map(t => ({
-       ...t,
-       taskId: t.task_id,
-       resultText: t.result_text,
-       resultUrl: t.result_url,
-       originalUrl: t.original_url,
-       fileName: t.file_name
-    }));
+
+    const now = Date.now();
+    const TIMEOUT_MS = 15 * 60 * 1000; // 15分钟超时判定
+    let hasUpdates = false;
+
+    // 1. 扫描超时任务并退回积分
+    for (const t of rows) {
+      if ((t.status === 'processing' || t.status === 'queuing' || t.status === 'uploading') && (now - t.created_at > TIMEOUT_MS)) {
+        await client.query('BEGIN');
+        try {
+            await client.query('UPDATE tasks SET status = $1, error = $2 WHERE task_id = $3', ['failed', '任务执行超时被迫终止', t.task_id]);
+            if (t.cost > 0) {
+                await client.query('UPDATE users SET credits = credits + $1 WHERE id = $2', [t.cost, req.user.id]);
+                await client.query(
+                  'INSERT INTO ledger (id, user_id, amount, type, note, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+                  ['txn_rf_' + Date.now() + '_' + Math.floor(Math.random()*1000), req.user.id, t.cost, 'refund', `超时退回 (${t.type})`, Date.now()]
+                );
+            }
+            await client.query('COMMIT');
+            t.status = 'failed';
+            t.error = '任务执行超时被迫终止';
+            hasUpdates = true;
+        } catch (err) {
+            await client.query('ROLLBACK');
+            console.error('[TaskScanner] 超时退款失败:', err.message);
+        }
+      }
+    }
+
+    // 2. 格式化数据返回给前端，强制转换静态文件路径绕过 Nginx 正则拦截
+    const normalizedTasks = rows.map(t => {
+       // 将 /uploads/xxx 转换为 /api/media?path=uploads/xxx 绕过 .png 后缀拦截
+       let safeOriginalUrl = t.original_url;
+       if (safeOriginalUrl && safeOriginalUrl.startsWith('/uploads/')) {
+           safeOriginalUrl = `/api/media?path=${safeOriginalUrl.replace(/^\//, '')}`;
+       }
+       return {
+         ...t,
+         taskId: t.task_id,
+         resultText: t.result_text,
+         resultUrl: t.result_url,
+         originalUrl: safeOriginalUrl,
+         fileName: t.file_name
+       };
+    });
+
     res.json({ tasks: normalizedTasks });
   } catch (err) {
     res.status(500).json({ error: '获取任务列表失败' });
+  } finally {
+    if (client) client.release();
   }
 });
 
