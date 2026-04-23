@@ -531,11 +531,36 @@ if (fs.existsSync(cnDistPath)) {
   console.warn('[Static] ⚠️ cn-web/dist 不存在，请先执行 npm run build');
 }
 
-// Listen on port
-app.listen(port, () => {
-  console.log(`[CN API] Server running on http://localhost:${port}`);
+// 数据库初始化与表结构校验
+async function initDB() {
+  try {
+    console.log('[DB] 正在校验表结构...');
+    // 检查并添加 original_url 字段
+    await db.query(`
+      DO $$ 
+      BEGIN 
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='tasks' AND column_name='original_url') THEN
+          ALTER TABLE tasks ADD COLUMN original_url TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='tasks' AND column_name='result_text') THEN
+          ALTER TABLE tasks ADD COLUMN result_text TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='tasks' AND column_name='result_url') THEN
+          ALTER TABLE tasks ADD COLUMN result_url TEXT;
+        END IF;
+      END $$;
+    `);
+    console.log('[DB] ✅ 表结构校验完成');
+  } catch (err) {
+    console.error('[DB] ❌ 表结构校验失败:', err.message);
+  }
+}
+
+// 启动服务器
+app.listen(3000, async () => {
+  await initDB();
+  console.log(`[CN API] Server running on http://localhost:3000`);
 });
 
 // 强行保持 Node.js 事件循环活跃，防止在某些 WebShell 容器下因缺少常规 handle 而自动退出
 process.stdin.resume();
-
