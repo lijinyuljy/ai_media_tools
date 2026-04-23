@@ -1,4 +1,5 @@
-const FC = require('@alicloud/fc20230330').default;
+const FC = require('@alicloud/fc20230330');
+const Client = FC.default;
 const OpenApi = require('@alicloud/openapi-client');
 const { Readable } = require('stream');
 const db = require('./db');
@@ -18,12 +19,9 @@ async function dispatchToFC(taskId, inputUrl) {
   }
 
   try {
-    // 强制使用阿里云官方 SDK 规范调用（内置完整的 ACS3-HMAC-SHA256 签名机制）
-    // 完全丢弃非标准直连逻辑，采用官方高可用 API 端点
     const endpoint = "1184220920681982.cn-hangzhou.fc.aliyuncs.com";
     console.log(`[FC] 严格执行官方 SDK 标准调用 (签名认证): https://${endpoint}`);
     
-    // 初始化 OpenAPI 客户端配置
     const config = new OpenApi.Config({
       accessKeyId: ALIBABA_CLOUD_ACCESS_KEY_ID,
       accessKeySecret: ALIBABA_CLOUD_ACCESS_KEY_SECRET,
@@ -33,16 +31,15 @@ async function dispatchToFC(taskId, inputUrl) {
       connectTimeout: 10000 
     });
 
-    // 实例化官方原生 FC 客户端
-    const client = new FC(config);
+    const client = new Client(config);
     
-    // 指定为异步调用，符合业务流程
-    const invokeHeaders = new FC.InvokeFunctionHeaders({ xFcInvocationType: 'Async' });
-    const invokeRequest = new FC.InvokeFunctionRequest({ 
+    // 直接使用原生字面量对象，绕过 TypeScript 到 CommonJS 的类导出名称异常
+    // 底层 @alicloud/tea 的 cast 方法会自动映射这些字段
+    const invokeHeaders = { xFcInvocationType: 'Async' };
+    const invokeRequest = { 
       body: Readable.from(Buffer.from(JSON.stringify(payload))) 
-    });
+    };
     
-    // 官方指定调用函数API (此时 SDK 会自动生成完美的 x-acs-signature 并在 Header 中带上)
     await client.invokeFunction('watermark-remover', invokeRequest, invokeHeaders);
     
     console.log(`[FC] 调用成功: ${taskId}`);
