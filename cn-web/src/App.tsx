@@ -202,20 +202,14 @@ function App() {
           
           {tasks.map((task) => {
              // 针对反推完成的任务，采用上下完全分离的图文排版
-             if (task.status === 'completed' && task.type === 'prompt' && task.resultText) {
+             if (task.status === 'completed' && task.type === 'prompt' && task.result_text) {
                 return (
                    <div key={task.taskId} className="glass-panel" style={{ padding: '1rem', display: 'flex', flexDirection: 'column' }}>
                       {/* 上半部：原图缩略带放大入口 */}
-                      <div style={{ width: '100%', height: '120px', background: '#1e293b', borderRadius: '8px', marginBottom: '1rem', backgroundImage: task.originalUrl ? `url(${task.originalUrl})` : 'none', backgroundSize: 'cover', backgroundPosition: 'center', position: 'relative', overflow: 'hidden' }}>
+                      <div style={{ width: '100%', height: '120px', background: '#1e293b', borderRadius: '8px', marginBottom: '1rem', backgroundImage: task.originalUrl ? `url(${API_BASE}${task.originalUrl})` : 'none', backgroundSize: 'cover', backgroundPosition: 'center', position: 'relative', overflow: 'hidden' }}>
                          {/* 底部暗角色渐变加深层，确保白色文字/按钮不论在什么图片上都高度清晰 */}
-                         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '50%', background: 'linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 100%)', pointerEvents: 'none' }}></div>
-                         
-                         <div style={{ position: 'absolute', bottom: '0.5rem', left: '0.6rem', fontSize: '0.7rem', color: 'rgba(255,255,255,0.8)', textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}>
-                            🔖 分析信源
-                         </div>
-
-                         {task.originalUrl && (
-                            <a href={task.originalUrl} target="_blank" rel="noreferrer" 
+                         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '50%', background: 'linear-                          {task.originalUrl && (
+                            <a href={`${API_BASE}${task.originalUrl}`} target="_blank" rel="noreferrer" 
                                style={{ 
                                    position: 'absolute', 
                                    bottom: '0.4rem', 
@@ -240,6 +234,12 @@ function App() {
                             >
                                🔍 展开原图
                             </a>
+                         )}                             }}
+                               onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.3)'}
+                               onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.15)'}
+                            >
+                               🔍 展开原图
+                            </a>
                          )}
                       </div>
 
@@ -252,7 +252,7 @@ function App() {
                       {/* 文本渲染区 */}
                       <div style={{ background: 'rgba(0,0,0,0.4)', padding: '0.8rem', borderRadius: '6px', border: '1px dashed var(--border-color)', marginBottom: '1rem', flex: 1, minHeight: '80px', maxHeight: '120px', overflowY: 'auto' }}>
                          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5, wordBreak: 'break-word' }}>
-                            {task.resultText}
+                            {task.result_text}
                          </p>
                       </div>
 
@@ -260,12 +260,15 @@ function App() {
                       <div style={{ display: 'flex', gap: '0.5rem', marginTop: 'auto' }}>
                         <button 
                            onClick={() => {
-                              navigator.clipboard.writeText(task.resultText);
+                              navigator.clipboard.writeText(task.result_text);
                               showToast('✅ 提示词已成功复制到剪贴板！');
                            }}
                            style={{ flex: 1, background: 'var(--btn-gradient)', color: 'white', border: 'none', padding: '0.6rem', borderRadius: '6px', cursor: 'pointer', fontSize:'0.85rem' }}>
                            📄 一键复制指令
                         </button>
+                        <a href={`${API_BASE}${task.result_url}`} download target="_blank" rel="noreferrer" style={{ flex: 1, background: '#10b981', color: 'white', textDecoration: 'none', textAlign: 'center', padding: '0.6rem', borderRadius: '6px', cursor: 'pointer', fontSize:'0.85rem' }}>
+                           📦 下载结果
+                        </a>
                       </div>
                    </div>
                 );
@@ -277,8 +280,8 @@ function App() {
                   
                   {/* 预览图区域 */}
                   <div style={{ width: '100%', height: '160px', background: '#1e293b', borderRadius: '8px', marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
-                     {task.status === 'completed' && task.resultUrl ? (
-                        <img src={task.resultUrl} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="Result" />
+                     {task.status === 'completed' && task.result_url ? (
+                        <img src={`${API_BASE}${task.result_url}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="Result" />
                      ) : (
                         <div style={{ color: task.status === 'processing' ? 'var(--accent-primary)' : 'var(--text-secondary)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
                            <span style={{ fontSize: '2rem', animation: task.status === 'processing' ? 'fadeIn 1s infinite alternate' : 'none' }}>

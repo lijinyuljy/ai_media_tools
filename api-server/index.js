@@ -261,7 +261,16 @@ app.get('/api/tasks', authUser, async (req, res) => {
       'SELECT * FROM tasks WHERE user_id = $1 ORDER BY created_at DESC', 
       [req.user.id]
     );
-    res.json({ tasks: rows });
+    // 兼容性处理：确保前端能拿到 camelCase 字段 (如果前端代码没改完的话)
+    const normalizedTasks = rows.map(t => ({
+       ...t,
+       taskId: t.task_id,
+       resultText: t.result_text,
+       resultUrl: t.result_url,
+       originalUrl: t.original_url,
+       fileName: t.file_name
+    }));
+    res.json({ tasks: normalizedTasks });
   } catch (err) {
     res.status(500).json({ error: '获取任务列表失败' });
   }
@@ -272,16 +281,17 @@ app.get('/api/tasks', authUser, async (req, res) => {
  * 云函数处理完成后，通过此接口通知 API Server 更新结果
  */
 app.post('/api/webhook/fc', async (req, res) => {
+  console.log(`[Webhook] >>> 收到请求: ${req.method} ${req.path}`, req.body);
   const { taskId, status, resultUrl, error, progress } = req.body;
   const { token } = req.query;
 
   // 安全校验：令牌不匹配则拒绝处理
   if (!token || token !== process.env.WEBHOOK_SECRET) {
-    console.warn(`[Webhook] ❌ 非法请求拦截: taskId=${taskId}, 来源IP=${req.ip}`);
+    console.warn(`[Webhook] ❌ 安全校验失败! 预期token: ${process.env.WEBHOOK_SECRET}, 收到token: ${token}, 来源IP: ${req.ip}`);
     return res.status(403).json({ error: 'Forbidden: Invalid token' });
   }
 
-  console.log(`[Webhook] ✅ 收到合法的 FC 回调: taskId=${taskId}, status=${status}`);
+  console.log(`[Webhook] ✅ 验证通过: taskId=${taskId}, status=${status}, result=${resultUrl}`);
   
   try {
     await taskService.updateTask(taskId, {
@@ -290,8 +300,10 @@ app.post('/api/webhook/fc', async (req, res) => {
       error,
       progress: progress || (status === 'completed' ? 100 : undefined)
     });
+    console.log(`[Webhook] 💾 数据库状态已更新为: ${status}`);
     res.json({ success: true });
   } catch (err) {
+    console.error(`[Webhook] ❌ 更新数据库失败:`, err.message);
     res.status(500).json({ error: 'Webhook 更新失败' });
   }
 });
@@ -483,14 +495,19 @@ app._runVlmPromptLogic = async (taskId, file) => {
 // Admin SPA: 挂载在 /admin/ 路径下
 const adminDistPath = path.join(__dirname, '..', 'admin-web', 'dist');
 if (fs.existsSync(adminDistPath)) {
+  // 1. 显式处理 assets 目录
+  app.use('/admin/assets', express.static(path.join(adminDistPath, 'assets')));
+  // 2. 处理根目录静态文件 (favicon, index.html 等)
   app.use('/admin', express.static(adminDistPath));
+  
   // SPA fallback: 所有 /admin/* 非 API 路径都返回 index.html
+  // 注意：使用 (.*) 是 Express 5 的一种兼容写法，或者使用 {*splat}
   app.get('/admin/{*splat}', (req, res) => {
     res.sendFile(path.join(adminDistPath, 'index.html'));
   });
-  console.log('[Static] ✅ Admin 前端已挂载: /admin/');
+  console.log('[Static] ✅ Admin 前端已挂载: /admin/ (目录: ' + adminDistPath + ')');
 } else {
-  console.warn('[Static] ⚠️ admin-web/dist 不存在，请先执行 npm run build');
+  console.warn('[Static] ⚠️ admin-web/dist 不存在，路径: ' + adminDistPath);
 }
 
 // CN (用户端) SPA: 挂载在根路径 /
