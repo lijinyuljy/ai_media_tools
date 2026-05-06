@@ -39,7 +39,7 @@ async function dispatchToFC(taskId, inputUrl) {
       xFcInvocationType: 'Async' 
     });
     const invokeRequest = new SDK.InvokeFunctionRequest({ 
-      body: Readable.from(JSON.stringify(payload)) 
+      body: Readable.from(Buffer.from(JSON.stringify(payload))) 
     });
     
     await client.invokeFunction('watermark-remover', invokeRequest, invokeHeaders);
