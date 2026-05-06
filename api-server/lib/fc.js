@@ -8,7 +8,8 @@ require('dotenv').config();
 const {
   ALIBABA_CLOUD_ACCESS_KEY_ID,
   ALIBABA_CLOUD_ACCESS_KEY_SECRET,
-  API_CALLBACK_URL
+  API_CALLBACK_URL,
+  FC_ENDPOINT
 } = process.env;
 
 async function dispatchToFC(taskId, inputUrl) {
@@ -19,7 +20,7 @@ async function dispatchToFC(taskId, inputUrl) {
   }
 
   try {
-    const endpoint = "1184220920681982.cn-hangzhou.fc.aliyuncs.com";
+    const endpoint = FC_ENDPOINT || "1184220920681982.cn-hangzhou-internal.fc.aliyuncs.com";
     console.log(`[FC] 严格执行官方 SDK 标准调用 (内置签名认证): https://${endpoint}`);
     
     const config = new OpenApi.Config({
@@ -38,7 +39,7 @@ async function dispatchToFC(taskId, inputUrl) {
       xFcInvocationType: 'Async' 
     });
     const invokeRequest = new SDK.InvokeFunctionRequest({ 
-      body: Readable.from(Buffer.from(JSON.stringify(payload))) 
+      body: Readable.from(JSON.stringify(payload)) 
     });
     
     await client.invokeFunction('watermark-remover', invokeRequest, invokeHeaders);
